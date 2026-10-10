@@ -23,7 +23,7 @@ Bot de Telegram personal para registrar entrenamientos de crossfit. Portfolio pa
 - v0.1 solo fuerza; calorías siempre como estimación.
 
 ## Forma de trabajar
-1. **Al empezar:** leer `MEMORY.md` para retomar el contexto.
+1. **Al empezar:** leer `MEMORY.md`, `docs/constitution.md` y la spec activa (`specs/NNN-*/`) antes de tocar código.
 2. Implementar lo mínimo de la tarea, con tests.
 3. **Al terminar:** actualizar `MEMORY.md` (estado, decisiones, aprendizajes, próximos pasos).
 

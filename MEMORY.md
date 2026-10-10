@@ -1,7 +1,7 @@
 # MEMORY.md — BoxLog
 
 ## Estado actual
-- Fase: inicio. Ya existen AGENTS.md y MEMORY.md; todavía no hay código.
+- Fase: inicio. Ya existen `AGENTS.md`, `MEMORY.md` y `docs/constitution.md`; todavía no hay código. Repo creado con primer commit.
 - Nombre provisional: BoxLog. Destino: GitHub como portfolio.
 - Uso inicial: solo yo; si funciona, se comparte.
 
@@ -16,7 +16,8 @@
 - **Estructura:** un paquete `boxlog/` con `core.py`, `db.py`, `commands.py` y `bot.py`, y tests en `tests/`.
 - **Un solo usuario:** el bot solo responde a mi Telegram ID; la tabla de usuarios queda para cuando se comparta.
 - **`/hoy` recibe porcentajes sin el símbolo:** `/hoy clean 70 80 85`.
-- **Git:** `.gitignore` desde el inicio y primer commit antes de escribir código.
+- **Git:** `.gitignore` desde el inicio y primer commit antes de escribir código (hecho: `e272823`).
+- **Método de trabajo:** Spec-Driven Development, tipo spec-anchored (la spec se mantiene viva).
 - **v0.1 solo fuerza:** perfil (peso, altura), RM por ejercicio con historial, sesión con `/inicio` y `/fin`, `/hoy` (RM → kilos), `/log clean 84x5` (peso planificado y real).
 - **Windows como entorno de desarrollo:** los comandos de la doc deben funcionar en Windows.
 
@@ -25,9 +26,8 @@
 - Evitar: token en el código o en git, datos personales en el repo, lógica de negocio dentro de los handlers.
 
 ## Próximos pasos
-1. `git init`, `.gitignore` y primer commit.
-2. Escribir la especificación del v0.1.
-3. Esquema SQLite: perfiles, ejercicios, RM + historial, sesiones, series.
-4. Módulos `core` con cálculos (porcentajes de RM) y sus tests.
-5. `commands` y `bot`: `/inicio`, `/fin`, `/hoy`, `/log`.
-6. Más adelante: WOD (tipo, cap, tiempo real), calorías METs como estimación, audios, datos de Garmin.
+1. Escribir la spec 001 del v0.1 (`specs/001-v01/`).
+2. Esquema SQLite: perfiles, ejercicios, RM + historial, sesiones, series.
+3. Módulos `core` con cálculos (porcentajes de RM) y sus tests.
+4. `commands` y `bot`: `/inicio`, `/fin`, `/hoy`, `/log`.
+5. Más adelante: WOD (tipo, cap, tiempo real), calorías METs como estimación, audios, datos de Garmin.
