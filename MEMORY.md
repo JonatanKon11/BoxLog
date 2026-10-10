@@ -1,7 +1,7 @@
 # MEMORY.md — BoxLog
 
 ## Estado actual
-- Fase: spec y plan listos. Spec 001 y plan en `specs/001-strength-logging/` (`spec.md` y `plan.md`); todavía no hay código. Repo creado con primer commit.
+- Fase: en implementación. Spec, plan y tasks listos; T1 (estructura) y T2 (core: parseo, normalización, format_kg — 30 tests) hechas. Repo creado con primer commit.
 - Nombre provisional: BoxLog. Destino: GitHub como portfolio.
 - Uso inicial: solo yo; si funciona, se comparte.
 
@@ -26,7 +26,7 @@
 - Evitar: token en el código o en git, datos personales en el repo, lógica de negocio dentro de los handlers.
 
 ## Próximos pasos
-1. Escribir `tasks.md` de la spec 001 (`specs/001-strength-logging/`).
+1. Implementar T3 de `tasks.md` (core: validaciones y textos de uso).
 2. Esquema SQLite: perfiles, ejercicios, RM + historial, sesiones, series.
 3. Módulos `core` con cálculos (porcentajes de RM) y sus tests.
 4. `commands` y `bot`: `/inicio`, `/fin`, `/hoy`, `/log`.
