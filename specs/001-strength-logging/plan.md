@@ -114,7 +114,7 @@ responder build_summary(inicio, fin, series):
 3. **Plan guardado por sesión** — el plan muere al cerrar la sesión (RF-05) sin borrar nada (RNF-3); descartado plan global en memoria (no sobreviviría al reinicio y rompería CL-11).
 4. **`exercise TEXT` normalizado en cada fila, sin tabla de ejercicios** — la spec no pide consultas por ejercicio; descartada tabla normalizada (complejidad innecesaria).
 5. **Fechas como texto ISO 8601** — legibles y suficientes para duración; descartado timestamp entero (menos legible en revisión de datos).
-6. **Redondeo con `round(x*2)/2`** — exacto para múltiplos de 0,5; descartado `Decimal` (sobra para kilos en float).
+6. **Redondeo con `math.floor(x*2+0.5)/2`** — mitades hacia arriba (123,25 → 123,5), como exige RF-05; descartado `round(x*2)/2` porque Python redondea al par y daba 123,0 en los empates, y `Decimal` sobra para kilos en float.
 7. **Perfil con historial de solo inserción (igual que `rm_history`)** — RF-01 exige conservar el historial de peso y altura aunque no se consulte; descartada la fila única (no dejaría historial).
 8. **Respuesta de dueño con `filters.User` en el propio handler** — un único punto de control; descartado un decorator propio (código extra sin necesidad).
 

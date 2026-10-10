@@ -11,12 +11,12 @@ Ordenadas por dependencia. Tests primero: cada tarea de código empieza por escr
   - Implementar `parse_number`, `normalize_exercise`, `parse_log_args`, `format_kg`.
   - Hecho cuando: `python -m pytest tests/test_core.py` en verde con los casos anteriores.
 
-- [ ] **T3. core: validaciones y textos de uso** — RF-01 (rangos), RF-02 (rango), RF-05 (validación de %), RF-09, RF-12
+- [x] **T3. core: validaciones y textos de uso** — RF-01 (rangos), RF-02 (rango), RF-05 (validación de %), RF-09, RF-12
   - Tests primero: rangos 30–300 / 100–250, 1–500, porcentajes 1–120 con decimales, aviso de uso con ejemplo, lista de comandos.
   - Implementar `validate_profile`, `validate_rm`, `validate_percentages`, `usage_example`, `help_text`.
   - Hecho cuando: `python -m pytest tests/test_core.py` en verde.
 
-- [ ] **T4. core: conversión de /hoy, duración, resumen y confirmación de /log** — RF-04, RF-05, RF-06, CL-5
+- [x] **T4. core: conversión de /hoy, duración, resumen y confirmación de /log** — RF-04, RF-05, RF-06, CL-5
   - Tests primero: redondeo a 0,5 kg, `70 80 85` sobre un RM, duración "1 h 23 min" / "45 min", volumen y máx. con peso real, pares `plan→real` solo de series con plan, sesión vacía en una línea, confirmación de /log con y sin plan.
   - Implementar `round_half_kg`, `convert_percentages`, `format_duration`, `build_summary`, `format_log_confirmation`.
   - Hecho cuando: `python -m pytest tests/test_core.py` en verde y `core` no importa Telegram ni sqlite3.

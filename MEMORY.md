@@ -1,7 +1,7 @@
 # MEMORY.md — BoxLog
 
 ## Estado actual
-- Fase: en implementación. Spec, plan y tasks listos; T1 (estructura) y T2 (core: parseo, normalización, format_kg — 30 tests) hechas. Repo creado con primer commit.
+- Fase: en implementación. Spec, plan y tasks listos (plan §6.6 ajustado al redondeo real); T1–T4 hechas, `core.py` completo (parseo, validaciones, avisos, conversión a 0,5 kg con mitades hacia arriba, duración, resumen y confirmación de /log): 95 tests en verde. Repo creado con primer commit.
 - Nombre provisional: BoxLog. Destino: GitHub como portfolio.
 - Uso inicial: solo yo; si funciona, se comparte.
 
@@ -23,10 +23,12 @@
 
 ## Aprendizajes y errores a evitar
 - Todavía no hay aprendizajes de código; ir aquí los fallos y hallazgos de cada tarea.
+- `round()` de Python redondea al par (banker's rounding): para el redondeo a 0,5 kg con mitades hacia arriba usar `math.floor(x * 2 + 0.5) / 2` (RF-05).
+- `float()` de Python acepta `nan`, `inf` y notación científica (`1e3`): validar antes con regex de solo decimal simple (RF-09). Las repeticiones de /log se devuelven como `int` y la separadora `x`/`X` se normaliza antes de partir.
 - Evitar: token en el código o en git, datos personales en el repo, lógica de negocio dentro de los handlers.
 
 ## Próximos pasos
-1. Implementar T3 de `tasks.md` (core: validaciones y textos de uso).
+1. Implementar T5 de `tasks.md` (db: esquema, perfil y RM).
 2. Esquema SQLite: perfiles, ejercicios, RM + historial, sesiones, series.
 3. Módulos `core` con cálculos (porcentajes de RM) y sus tests.
 4. `commands` y `bot`: `/inicio`, `/fin`, `/hoy`, `/log`.

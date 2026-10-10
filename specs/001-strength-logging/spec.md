@@ -40,7 +40,7 @@ BoxLog es un bot de Telegram personal para registrar sesiones de fuerza de cross
   - CA: si no hay series, el resumen lo indicará en una línea.
   - CA: si no hay sesión abierta, el sistema deberá responder "No hay sesión abierta, envía /inicio" sin cambiar nada.
 - RF-05 Conversión de RM: Cuando el usuario envía `/hoy <ejercicio> <porcentajes...>` (p. ej. /hoy clean 70 80 85), el sistema deberá responder los kilos equivalentes de cada porcentaje con el RM vigente de ese ejercicio.
-  - CA: cada resultado se redondeará al 0,5 kg más cercano.
+  - CA: cada resultado se redondeará al 0,5 kg más cercano, con las mitades redondeadas hacia arriba (123,25 → 123,5; 123,75 → 124,0; 124,25 → 124,5).
   - CA: los porcentajes aceptan decimales y deben estar entre 1 y 120; fuera de ese rango o sin porcentajes se aplica RF-09.
   - CA: el resultado será el plan de la sesión para ese ejercicio; el plan termina al cerrar la sesión.
   - CA: si no hay sesión abierta, responderá el aviso de RF-04 sin cambiar nada.
