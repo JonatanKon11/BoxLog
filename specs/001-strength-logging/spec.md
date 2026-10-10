@@ -20,6 +20,7 @@ BoxLog es un bot de Telegram personal para registrar sesiones de fuerza de cross
 ## Requisitos funcionales
 - RF-01 Perfil: Cuando el usuario envía `/perfil <peso> <altura>` (peso en kg y altura en cm; p. ej. /perfil 78 175), el sistema deberá registrar o actualizar su peso y su altura.
   - CA: la confirmación mostrará el peso y la altura tal cual se cargaron, con coma decimal (22,5).
+  - CA: se conservará el historial de peso y altura; en esta versión no se consulta.
   - CA: el peso deberá estar entre 30 y 300 kg y la altura entre 100 y 250 cm; fuera de ese rango se aplica RF-09.
   - CA: el comando funcionará con sesión abierta o cerrada.
 - RF-02 RM con historial: Cuando el usuario envía `/rm <ejercicio> <kg>`, el sistema deberá guardarlo como RM vigente de ese ejercicio conservando los valores anteriores.
@@ -49,6 +50,7 @@ BoxLog es un bot de Telegram personal para registrar sesiones de fuerza de cross
   - CA: el peso del mensaje es el peso real; el peso planificado se tomará, en orden, del siguiente valor no consumido del plan vigente de /hoy para ese ejercicio en la sesión actual.
   - CA: si el ejercicio no tiene plan o el plan se agotó, la serie se guardará con el planificado vacío; un /log nunca se rechaza por falta de plan.
   - CA: si no hay sesión abierta, responderá el aviso de RF-04 sin guardar nada.
+  - CA: responderá `<ejercicio> · serie N: <peso> kg × <reps>`, donde N es el número de serie de ese ejercicio en la sesión y los kilos van con coma decimal; si la serie tuvo plan, añadirá ` (plan <kg>)`.
 - RF-07 Deshacer: Cuando el usuario envía /deshacer con sesión abierta, el sistema deberá borrar la última serie registrada en esa sesión.
   - CA: el valor planificado de la serie borrada volverá a quedar disponible para la siguiente serie de ese ejercicio.
   - CA: el bot confirmará qué serie borró: ejercicio, peso y repeticiones.
