@@ -16,10 +16,10 @@ Bot de Telegram personal para registrar entrenamientos de crossfit. Portfolio pa
 - Sin claves en el código: el token va en variable de entorno `.env` (nunca en git).
 
 ## Reglas de dominio
-- v0.1: `/perfil`, `/rm`, `/inicio`, `/fin`, `/hoy`, `/log`. Comandos con formato fijo, no lenguaje natural.
+- v0.1: `/perfil`, `/rm`, `/rms`, `/inicio`, `/fin`, `/hoy`, `/log`, `/deshacer`. Comandos con formato fijo, no lenguaje natural.
 - Una serie por mensaje: `/log clean 84x5` guarda peso planificado y peso real.
 - La sesión se abre con `/inicio` y se cierra con `/fin`; de ahí sale la duración.
-- `/hoy` convierte porcentajes del RM a kilos; RM y perfil (peso, altura) tienen historial.
+- `/hoy` convierte porcentajes del RM a kilos; RM y perfil (peso, altura) tienen historial; el historial de RM se guarda pero no se consulta en esta versión.
 - v0.1 solo fuerza; calorías siempre como estimación.
 
 ## Forma de trabajar

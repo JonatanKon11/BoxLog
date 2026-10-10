@@ -19,38 +19,49 @@ BoxLog es un bot de Telegram personal para registrar sesiones de fuerza de cross
 
 ## Requisitos funcionales
 - RF-01 Perfil: Cuando el usuario envía `/perfil <peso> <altura>` (peso en kg y altura en cm; p. ej. /perfil 78 175), el sistema deberá registrar o actualizar su peso y su altura.
-  - CA: confirmará los valores en español con coma decimal (22,5).
-  - CA: el peso deberá estar entre 30 y 300 kg y la altura entre 100 y 250 cm; fuera de ese rango, el sistema responderá un aviso de uso con un ejemplo y no guardará nada.
+  - CA: la confirmación mostrará el peso y la altura tal cual se cargaron, con coma decimal (22,5).
+  - CA: el peso deberá estar entre 30 y 300 kg y la altura entre 100 y 250 cm; fuera de ese rango se aplica RF-09.
   - CA: el comando funcionará con sesión abierta o cerrada.
 - RF-02 RM con historial: Cuando el usuario envía `/rm <ejercicio> <kg>`, el sistema deberá guardarlo como RM vigente de ese ejercicio conservando los valores anteriores.
-  - CA: cada valor quedará asociado a su fecha; el RM vigente será el más reciente.
-  - CA: cuando el usuario envía `/rms`, el sistema deberá responder la lista de RM vigentes.
+  - CA: cada valor quedará asociado a su fecha; si hay dos RM del mismo ejercicio, vale el último cargado.
+  - CA: el peso del RM deberá estar entre 1 y 500 kg; fuera de ese rango se aplica RF-09.
+  - CA: cuando el usuario envía `/rms`, el sistema deberá responder la lista de RM vigentes; si no hay ninguno, responderá un aviso sugiriendo `/rm`.
   - CA: ambos comandos funcionarán con sesión abierta o cerrada.
 - RF-03 Inicio de sesión: Cuando el usuario envía /inicio, el sistema deberá abrir una sesión con marca de tiempo.
   - CA: si ya hay una sesión abierta, el sistema deberá responder un aviso indicando desde cuándo está abierta y sugiriendo /fin, sin cambiar nada.
   - CA: una sesión olvidada se deja abierta indefinidamente; solo el aviso de /inicio la da por conocida.
-- RF-04 Cierre de sesión: Cuando el usuario envía /fin con sesión abierta, el sistema deberá cerrarla y responder un resumen con: duración (de /inicio a /fin), y por cada ejercicio el número de series, las repeticiones totales, el volumen (suma de kilos por repeticiones), el peso máximo usado y, solo cuando hubo peso planificado, la desviación entre planificado y real (p. ej. "plan 84 / real 82").
-  - CA: las series sin planificado no contarán para la desviación.
+  - CA: una sesión abierta sobrevive al reinicio del bot: queda guardada y sigue siendo válida después.
+- RF-04 Cierre de sesión: Cuando el usuario envía /fin con sesión abierta, el sistema deberá cerrarla y responder un resumen con: la duración de /inicio a /fin y, por cada ejercicio, el número de series, las repeticiones totales, el volumen, el peso máximo y la desviación.
+  - CA: la duración se mostrará como "1 h 23 min" o, si dura menos de una hora, "45 min".
+  - CA: el volumen (suma de kilos por repeticiones) y el peso máximo usarán siempre el peso real.
+  - CA: la desviación se mostrará por ejercicio como lista de pares de las series que tuvieron plan, con formato "plan→real: 84→82, 96→96"; los ejercicios sin series planificadas no muestran desviación.
   - CA: el resumen terminará con el volumen total de la sesión.
   - CA: si no hay series, el resumen lo indicará en una línea.
   - CA: si no hay sesión abierta, el sistema deberá responder "No hay sesión abierta, envía /inicio" sin cambiar nada.
 - RF-05 Conversión de RM: Cuando el usuario envía `/hoy <ejercicio> <porcentajes...>` (p. ej. /hoy clean 70 80 85), el sistema deberá responder los kilos equivalentes de cada porcentaje con el RM vigente de ese ejercicio.
-  - CA: el resultado será el plan de la sesión para ese ejercicio.
+  - CA: cada resultado se redondeará al 0,5 kg más cercano.
+  - CA: los porcentajes aceptan decimales y deben estar entre 1 y 120; fuera de ese rango o sin porcentajes se aplica RF-09.
+  - CA: el resultado será el plan de la sesión para ese ejercicio; el plan termina al cerrar la sesión.
   - CA: si no hay sesión abierta, responderá el aviso de RF-04 sin cambiar nada.
   - CA: si el ejercicio no tiene RM, responderá el aviso "No tengo RM de <ejercicio>, cárgalo con /rm" sin cambiar nada.
-  - CA: si el usuario repite /hoy para el mismo ejercicio en la misma sesión, el plan anterior se reemplaza y el orden de los valores se reinicia.
+  - CA: si el usuario repite /hoy para el mismo ejercicio en la misma sesión, el plan anterior se reemplaza y el orden de los valores se reinicia; el nuevo plan solo afecta a las series que se registren después, las ya guardadas conservan su peso planificado.
 - RF-06 Registro de serie: Cuando el usuario envía `/log <ejercicio> <peso>x<repeticiones>` (p. ej. /log clean 84x5), el sistema deberá guardar la serie dentro de la sesión actual.
-  - CA: el peso del mensaje es el peso real; el peso planificado se tomará, en orden, del siguiente valor no consumido del plan de /hoy para ese ejercicio.
-  - CA: si el ejercicio no tiene plan o el plan se agotó, la serie se guardará con el planificado vacío; el sistema no rechazará nunca un /log por falta de plan.
+  - CA: el peso del mensaje es el peso real; el peso planificado se tomará, en orden, del siguiente valor no consumido del plan vigente de /hoy para ese ejercicio en la sesión actual.
+  - CA: si el ejercicio no tiene plan o el plan se agotó, la serie se guardará con el planificado vacío; un /log nunca se rechaza por falta de plan.
   - CA: si no hay sesión abierta, responderá el aviso de RF-04 sin guardar nada.
 - RF-07 Deshacer: Cuando el usuario envía /deshacer con sesión abierta, el sistema deberá borrar la última serie registrada en esa sesión.
+  - CA: el valor planificado de la serie borrada volverá a quedar disponible para la siguiente serie de ese ejercicio.
+  - CA: el bot confirmará qué serie borró: ejercicio, peso y repeticiones.
   - CA: si la sesión no tiene series, responderá un aviso indicándolo y no hará nada.
   - CA: si no hay sesión abierta, responderá el aviso de RF-04 sin cambiar nada.
   - CA: solo se borra la última serie; editar o borrar otras series queda fuera de alcance.
 - RF-08 Usuario único: El sistema deberá ignorar los mensajes de cualquier ID distinto del propietario, sin responder ni guardar datos.
-- RF-09 Formato inválido: Si el usuario envía un comando con formato inválido (falta de repeticiones, números cero o negativos, /hoy sin porcentajes), el sistema deberá responder un aviso de uso con un ejemplo y no guardará ni cambiará nada.
+- RF-09 Avisos de uso: Si el usuario envía un comando con formato inválido (falta de repeticiones, "x" mal colocada, números cero o negativos, valores fuera de rango, argumentos de más o comandos que requieren argumentos enviados sin ellos), el sistema deberá responder con un único aviso de uso con un ejemplo y no guardará ni cambiará nada.
   - CA: el aviso indicará la sintaxis correcta con un ejemplo real (p. ej. "Usa /log clean 84x5").
 - RF-10 Entrada numérica: El sistema deberá aceptar decimales con coma y con punto (84,5 y 84.5) en todos los comandos numéricos.
+- RF-11 Nombres de ejercicio: El sistema deberá ignorar mayúsculas/minúsculas y los espacios múltiples al comparar nombres de ejercicio ("Clean", "clean" y "clean  " son el mismo ejercicio); no se resuelven sinónimos.
+  - CA: el mismo ejercicio escrito de distintas formas compartirá su RM, su plan y sus series.
+- RF-12 Comandos desconocidos: Si el usuario envía un comando que no existe o texto libre, el sistema deberá responder un mensaje breve con la lista de comandos disponibles.
 
 ## Requisitos no funcionales
 - RNF-1 Idioma: todos los mensajes al usuario estarán en español; los kilos se mostrarán con coma decimal (22,5).
@@ -62,13 +73,15 @@ BoxLog es un bot de Telegram personal para registrar sesiones de fuerza de cross
 - CL-1 /inicio con sesión ya abierta (incluida una olvidada): aviso con fecha/hora de apertura y sugerencia de /fin; sin cambios. La sesión olvidada se deja abierta (RF-03).
 - CL-2 /fin, /hoy, /log o /deshacer sin sesión abierta → aviso "No hay sesión abierta, envía /inicio"; sin cambios.
 - CL-3 /log de un ejercicio sin plan o con el plan agotado → serie guardada con planificado vacío, sin error.
-- CL-4 Si /hoy devuelve más valores de los que se registran series para ese ejercicio, los valores no usados quedan sin efecto, sin error ni aviso.
+- CL-4 Si /hoy devuelve más valores de los que se registran series para ese ejercicio, los valores no usados quedan sin efecto al cerrar la sesión o al repetir /hoy, sin error ni aviso.
 - CL-5 Sesión cerrada sin series → /fin responde una única línea indicándolo.
 - CL-6 /perfil, /rm y /rms → funcionan siempre, con sesión abierta o no.
 - CL-7 Cualquier mensaje de un ID no propietario → ignorado por completo.
-- CL-8 Comando con formato inválido (sin repeticiones, números cero o negativos, /hoy sin porcentajes) → aviso de uso con ejemplo; no se guarda nada (RF-09).
+- CL-8 Comando con formato inválido (sin repeticiones, "x" mal colocada, números cero o negativos, valores fuera de rango, argumentos de más o comandos sin argumentos) → un único aviso de uso con ejemplo; no se guarda nada (RF-09).
 - CL-9 /deshacer en una sesión sin series → aviso indicándolo; no hace nada.
 - CL-10 /hoy de un ejercicio sin RM → aviso "No tengo RM de <ejercicio>, cárgalo con /rm"; sin cambios.
+- CL-11 Reinicio del bot con la sesión abierta → la sesión se conserva y sigue funcionando (RF-03).
+- CL-12 Comando desconocido o texto libre → mensaje breve con la lista de comandos (RF-12).
 
 ## Fuera de alcance
 - WOD (tipo, cap, tiempo real), calorías/METs, audios y datos de Garmin.
@@ -79,6 +92,7 @@ BoxLog es un bot de Telegram personal para registrar sesiones de fuerza de cross
 - Editar o borrar series distintas de la última (solo existe /deshacer).
 
 ## Criterios de finalización
+- Tests primero: se escriben antes que el código y no se avanza a la siguiente tarea con tests en rojo.
 - Todos los RF y CL cubiertos con pruebas automatizadas en verde antes de cada commit.
 - Verificación final: sin token ni datos personales en el diff.
 - Mensajes de usuario en español con kilos en coma decimal.
