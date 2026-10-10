@@ -1,5 +1,6 @@
 """Tests de commands: /perfil, /rm y /rms (RF-01, RF-02, RF-09, CL-6). BD temporal."""
 
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -150,6 +151,97 @@ def test_rms_lista_los_vigentes(conn):
 def test_rms_con_argumentos_aviso(conn):
     db.open_session(conn)
     assert commands.cmd_rms(conn, ["clean"]) == "Usa /rms (sin nada más)"
+
+
+# --- /inicio (RF-03, CL-1) ---
+
+
+def test_inicio_abre_sesion_con_marca_de_tiempo(conn):
+    texto = commands.cmd_inicio(conn, [])
+    abierta = db.get_open_session(conn)
+    assert abierta is not None
+    assert texto == f"Sesión iniciada {abierta['started_at']}"
+
+
+def test_inicio_con_sesion_abierta_aviso_sin_cambiar_nada(conn):
+    session_id = db.open_session(conn)
+    texto = commands.cmd_inicio(conn, [])
+    abierta = db.get_open_session(conn)
+    assert abierta["id"] == session_id  # la misma sesión
+    assert conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0] == 1
+    desde = abierta["started_at"].replace("T", " ")
+    assert texto == f"Sesión abierta desde {desde}. Ciérrala con /fin"
+
+
+def test_inicio_con_argumentos_aviso_de_uso(conn):
+    assert commands.cmd_inicio(conn, ["x"]) == "Usa /inicio (sin nada más)"
+    assert db.get_open_session(conn) is None  # no abre nada
+
+
+def test_inicio_tras_cerrar_abre_una_nueva(conn):
+    primera = db.open_session(conn)
+    db.close_session(conn, primera)
+    texto = commands.cmd_inicio(conn, [])
+    segunda = db.get_open_session(conn)
+    assert segunda["id"] != primera
+    assert texto == f"Sesión iniciada {segunda['started_at']}"
+
+
+# --- /fin (RF-04, CL-2, CL-5) ---
+
+
+def _abrir_hace(conn, session_id, minutes):
+    hace = (datetime.now() - timedelta(minutes=minutes)).isoformat(timespec="seconds")
+    conn.execute(
+        "UPDATE sessions SET started_at = ? WHERE id = ?", (hace, session_id)
+    )
+    conn.commit()
+
+
+def test_fin_sin_sesion_abierta_aviso(conn):
+    assert commands.cmd_fin(conn, []) == "No hay sesión abierta, envía /inicio"
+
+
+def test_fin_con_argumentos_aviso_de_uso_sin_cerrar(conn):
+    db.open_session(conn)
+    assert commands.cmd_fin(conn, ["x"]) == "Usa /fin (sin nada más)"
+    assert db.get_open_session(conn) is not None  # no cierra
+
+
+def test_fin_sesion_vacia_una_sola_linea(conn):
+    commands.cmd_inicio(conn, [])
+    texto = commands.cmd_fin(conn, [])
+    assert texto == "Sesión cerrada sin series."
+    assert db.get_open_session(conn) is None  # la sesión queda cerrada
+
+
+def test_fin_dos_veces_la_segunda_avisa(conn):
+    commands.cmd_inicio(conn, [])
+    commands.cmd_fin(conn, [])
+    assert commands.cmd_fin(conn, []) == "No hay sesión abierta, envía /inicio"
+
+
+def test_fin_resumen_duracion_y_volumen_real(conn):
+    session_id = db.open_session(conn)
+    _abrir_hace(conn, session_id, minutes=45)
+    db.insert_series(conn, session_id, "clean", 84, 5, 84, None)
+    db.insert_series(conn, session_id, "clean", 82, 5, 84, None)
+    texto = commands.cmd_fin(conn, [])
+    assert "Duración: 45 min" in texto
+    assert "clean: 2 series · 10 repeticiones · volumen 830 kg · máx 84 kg" in texto
+    assert "plan→real: 84→84, 84→82" in texto
+    assert texto.splitlines()[-1] == "Volumen total: 830 kg"
+    assert db.get_open_session(conn) is None
+
+
+def test_fin_resumen_mas_de_una_hora(conn):
+    session_id = db.open_session(conn)
+    _abrir_hace(conn, session_id, minutes=83)
+    db.insert_series(conn, session_id, "front", 40, 3, None, None)
+    texto = commands.cmd_fin(conn, [])
+    assert "Duración: 1 h 23 min" in texto
+    assert "front: 1 serie · 3 repeticiones · volumen 120 kg · máx 40 kg" in texto
+    assert "plan→real" not in texto  # sin series planificadas
 
 
 # --- separación de capas (constitución 3) ---

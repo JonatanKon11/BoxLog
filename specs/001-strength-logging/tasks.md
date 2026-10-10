@@ -36,7 +36,7 @@ Ordenadas por dependencia. Tests primero: cada tarea de código empieza por escr
   - Implementar los tres comandos en `commands.py` (core + db).
   - Hecho cuando: `python -m pytest tests/test_commands.py` en verde.
 
-- [ ] **T8. commands: /inicio y /fin** — RF-03, RF-04, CL-1, CL-2, CL-5
+- [x] **T8. commands: /inicio y /fin** — RF-03, RF-04, CL-1, CL-2, CL-5
   - Tests primero: apertura, aviso con fecha y sugerencia de /fin si ya estaba abierta, cierre con resumen completo (duración, series, reps, volumen real, máx., pares plan→real, volumen total), /fin sin sesión, sesión sin series.
   - Implementar `/inicio` y `/fin` en `commands.py`.
   - Hecho cuando: `python -m pytest tests/test_commands.py` en verde.

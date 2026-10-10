@@ -3,7 +3,44 @@
 Sin dependencias externas: cada comando recibe la conexión y los argumentos.
 """
 
+from datetime import datetime
+
 from boxlog import core, db
+
+
+def cmd_inicio(connection, args: list[str]) -> str:
+    """/inicio (RF-03): abre una sesión; con una ya abierta solo avisa (CL-1)."""
+    if args:
+        return core.usage_example("inicio")
+    abierta = db.get_open_session(connection)
+    if abierta is not None:
+        desde = abierta["started_at"].replace("T", " ")
+        return f"Sesión abierta desde {desde}. Ciérrala con /fin"
+    session_id = db.open_session(connection)
+    session = db.get_session(connection, session_id)
+    return f"Sesión iniciada {session['started_at']}"
+
+
+def cmd_fin(connection, args: list[str]) -> str:
+    """/fin (RF-04): cierra la sesión y responde el resumen de core (CL-2, CL-5)."""
+    if args:
+        return core.usage_example("fin")
+    abierta = db.get_open_session(connection)
+    if abierta is None:
+        return core.NO_OPEN_SESSION
+    series = db.list_series(connection, abierta["id"])
+    db.close_session(connection, abierta["id"])
+    summary_series = [
+        {
+            "exercise": serie["exercise"],
+            "real_weight": serie["real_weight_kg"],
+            "reps": serie["reps"],
+            "planned_weight": serie["planned_weight_kg"],
+        }
+        for serie in series
+    ]
+    start = datetime.fromisoformat(abierta["started_at"])
+    return core.build_summary(start, datetime.now(), summary_series)
 
 
 def cmd_perfil(connection, args: list[str]) -> str:

@@ -71,6 +71,9 @@ _USAGE_EXAMPLES = {
 }
 
 
+NO_OPEN_SESSION = "No hay sesión abierta, envía /inicio"
+
+
 def help_text() -> str:
     """Lista de comandos disponibles (RF-12)."""
     return (
