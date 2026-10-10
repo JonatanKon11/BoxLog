@@ -161,13 +161,16 @@ def test_validate_profile_dentro_de_rango_devuelve_none():
 
 
 @pytest.mark.parametrize(
-    "peso, altura",
-    [(29.9, 175), (301, 175), (78, 99), (78, 251)],
+    "peso, altura, motivo",
+    [
+        (29.9, 175, "El peso tiene que estar entre 30 y 300 kg."),
+        (301, 175, "El peso tiene que estar entre 30 y 300 kg."),
+        (78, 99, "La altura tiene que estar entre 100 y 250 cm."),
+        (78, 251, "La altura tiene que estar entre 100 y 250 cm."),
+    ],
 )
-def test_validate_profile_fuera_de_rango_devuelve_aviso_de_uso(peso, altura):
-    aviso = validate_profile(peso, altura)
-    assert aviso is not None
-    assert "perfil" in aviso
+def test_validate_profile_fuera_de_rango_devuelve_motivo_y_ejemplo(peso, altura, motivo):
+    assert validate_profile(peso, altura) == f"{motivo} Usa /perfil 78 175"
 
 
 # --- validate_rm (RF-02, RF-09) ---
@@ -181,10 +184,8 @@ def test_validate_rm_dentro_de_rango_devuelve_none():
 
 
 @pytest.mark.parametrize("kg", [0, 0.9, 501])
-def test_validate_rm_fuera_de_rango_devuelve_aviso_de_uso(kg):
-    aviso = validate_rm(kg)
-    assert aviso is not None
-    assert "rm" in aviso
+def test_validate_rm_fuera_de_rango_devuelve_motivo_y_ejemplo(kg):
+    assert validate_rm(kg) == "El RM tiene que estar entre 1 y 500 kg. Usa /rm clean 100"
 
 
 # --- validate_percentages (RF-05, RF-09) ---

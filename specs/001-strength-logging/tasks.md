@@ -31,7 +31,7 @@ Ordenadas por dependencia. Tests primero: cada tarea de código empieza por escr
   - Implementar las funciones de sesión, plan y series en `db.py`.
   - Hecho cuando: `python -m pytest tests/test_db.py` en verde.
 
-- [ ] **T7. commands: /perfil, /rm y /rms** — RF-01, RF-02, RF-09, CL-6
+- [x] **T7. commands: /perfil, /rm y /rms** — RF-01, RF-02, RF-09, CL-6
   - Tests primero: carga y confirmación con coma decimal, fuera de rango → un solo aviso de uso, RM guardado y listado, /rms vacío sugiere /rm, funcionan sin sesión abierta.
   - Implementar los tres comandos en `commands.py` (core + db).
   - Hecho cuando: `python -m pytest tests/test_commands.py` en verde.

@@ -21,11 +21,12 @@ BoxLog es un bot de Telegram personal para registrar sesiones de fuerza de cross
 - RF-01 Perfil: Cuando el usuario envía `/perfil <peso> <altura>` (peso en kg y altura en cm; p. ej. /perfil 78 175), el sistema deberá registrar o actualizar su peso y su altura.
   - CA: la confirmación mostrará el peso y la altura tal cual se cargaron, con coma decimal (22,5).
   - CA: se conservará el historial de peso y altura; en esta versión no se consulta.
-  - CA: el peso deberá estar entre 30 y 300 kg y la altura entre 100 y 250 cm; fuera de ese rango se aplica RF-09.
+  - CA: el peso deberá estar entre 30 y 300 kg y la altura entre 100 y 250 cm; fuera de ese rango se aplicará RF-09 con un aviso que indica el motivo y el ejemplo (p. ej. "El peso tiene que estar entre 30 y 300 kg. Usa /perfil 78 175").
   - CA: el comando funcionará con sesión abierta o cerrada.
 - RF-02 RM con historial: Cuando el usuario envía `/rm <ejercicio> <kg>`, el sistema deberá guardarlo como RM vigente de ese ejercicio conservando los valores anteriores.
   - CA: cada valor quedará asociado a su fecha; si hay dos RM del mismo ejercicio, vale el último cargado.
-  - CA: el peso del RM deberá estar entre 1 y 500 kg; fuera de ese rango se aplica RF-09.
+  - CA: el peso del RM deberá estar entre 1 y 500 kg; fuera de ese rango se aplicará RF-09 con un aviso que indica el motivo y el ejemplo (p. ej. "El RM tiene que estar entre 1 y 500 kg. Usa /rm clean 100").
+  - CA: cuando el RM reemplaza a uno existente del mismo ejercicio, la confirmación mencionará el valor anterior (p. ej. "RM de clean guardado: 125 kg (antes 120 kg)").
   - CA: cuando el usuario envía `/rms`, el sistema deberá responder la lista de RM vigentes; si no hay ninguno, responderá un aviso sugiriendo `/rm`.
   - CA: ambos comandos funcionarán con sesión abierta o cerrada.
 - RF-03 Inicio de sesión: Cuando el usuario envía /inicio, el sistema deberá abrir una sesión con marca de tiempo.

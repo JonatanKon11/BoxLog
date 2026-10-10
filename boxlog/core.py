@@ -98,17 +98,22 @@ def usage_example(command: str) -> str:
 
 
 def validate_profile(weight: float, height: float) -> str | None:
-    """Rangos del perfil (RF-01): 30–300 kg y 100–250 cm. Devuelve el aviso o None."""
-    if 30 <= weight <= 300 and 100 <= height <= 250:
-        return None
-    return usage_example("perfil")
+    """Rangos del perfil (RF-01): 30–300 kg y 100–250 cm.
+
+    Devuelve un aviso con el motivo y el ejemplo, o None si todo está bien.
+    """
+    if not 30 <= weight <= 300:
+        return f"El peso tiene que estar entre 30 y 300 kg. {usage_example('perfil')}"
+    if not 100 <= height <= 250:
+        return f"La altura tiene que estar entre 100 y 250 cm. {usage_example('perfil')}"
+    return None
 
 
 def validate_rm(kg: float) -> str | None:
-    """Rango del RM (RF-02): 1–500 kg. Devuelve el aviso o None."""
-    if 1 <= kg <= 500:
-        return None
-    return usage_example("rm")
+    """Rango del RM (RF-02): 1–500 kg. Aviso con motivo y ejemplo, o None."""
+    if not 1 <= kg <= 500:
+        return f"El RM tiene que estar entre 1 y 500 kg. {usage_example('rm')}"
+    return None
 
 
 def validate_percentages(pcts: list[float]) -> str | None:
