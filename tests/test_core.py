@@ -26,6 +26,13 @@ def test_parse_number_invalido_lanza_value_error(texto):
         parse_number(texto)
 
 
+@pytest.mark.parametrize("texto", ["nan", "inf", "-inf", "1e3", "1E3", "1e-3"])
+def test_parse_number_rechaza_no_finitos_y_notacion_cientifica(texto):
+    """RF-09: nan, inf y notación científica son formato inválido."""
+    with pytest.raises(ValueError):
+        parse_number(texto)
+
+
 # --- normalize_exercise (RF-11) ---
 
 

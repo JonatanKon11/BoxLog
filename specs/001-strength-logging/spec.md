@@ -58,8 +58,9 @@ BoxLog es un bot de Telegram personal para registrar sesiones de fuerza de cross
   - CA: si no hay sesión abierta, responderá el aviso de RF-04 sin cambiar nada.
   - CA: solo se borra la última serie; editar o borrar otras series queda fuera de alcance.
 - RF-08 Usuario único: El sistema deberá ignorar los mensajes de cualquier ID distinto del propietario, sin responder ni guardar datos.
-- RF-09 Avisos de uso: Si el usuario envía un comando con formato inválido (falta de repeticiones, "x" mal colocada, números cero o negativos, valores fuera de rango, argumentos de más o comandos que requieren argumentos enviados sin ellos), el sistema deberá responder con un único aviso de uso con un ejemplo y no guardará ni cambiará nada.
+- RF-09 Avisos de uso: Si el usuario envía un comando con formato inválido (falta de repeticiones, "x" mal colocada, repeticiones no enteras, valores no numéricos o no finitos como nan o inf, notación científica como 1e3x5, números cero o negativos, valores fuera de rango, argumentos de más o comandos que requieren argumentos enviados sin ellos), el sistema deberá responder con un único aviso de uso con un ejemplo y no guardará ni cambiará nada.
   - CA: el aviso indicará la sintaxis correcta con un ejemplo real (p. ej. "Usa /log clean 84x5").
+  - CA: la "x" entre peso y repeticiones puede escribirse en minúscula o mayúscula (84x5 y 84X5).
 - RF-10 Entrada numérica: El sistema deberá aceptar decimales con coma y con punto (84,5 y 84.5) en todos los comandos numéricos.
 - RF-11 Nombres de ejercicio: El sistema deberá ignorar mayúsculas/minúsculas y los espacios múltiples al comparar nombres de ejercicio ("Clean", "clean" y "clean  " son el mismo ejercicio); no se resuelven sinónimos.
   - CA: el mismo ejercicio escrito de distintas formas compartirá su RM, su plan y sus series.
