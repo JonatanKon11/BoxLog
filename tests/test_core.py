@@ -12,6 +12,7 @@ from boxlog.core import (
     format_duration,
     format_kg,
     format_log_confirmation,
+    format_start_time,
     help_text,
     normalize_exercise,
     parse_log_args,
@@ -289,6 +290,19 @@ def test_format_duration_hora_y_minutos():
 
 def test_format_duration_hora_completa():
     assert format_duration(3600) == "1 h 0 min"
+
+
+# --- format_start_time (RF-03) ---
+
+
+def test_format_start_time_hoy_sin_fecha():
+    ahora = datetime(2026, 10, 10, 21, 0)
+    assert format_start_time("2026-10-10T20:35:00", ahora) == "las 20:35"
+
+
+def test_format_start_time_otro_dia_con_fecha():
+    ahora = datetime(2026, 10, 10, 9, 0)
+    assert format_start_time("2026-10-09T20:35:00", ahora) == "el 09/10 a las 20:35"
 
 
 # --- build_summary (RF-04, CL-5) ---

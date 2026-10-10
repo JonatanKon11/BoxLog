@@ -1,7 +1,7 @@
 # MEMORY.md — BoxLog
 
 ## Estado actual
-- Fase: en implementación. Spec, plan y tasks listos (plan §6.6 ajustado al redondeo real; RF-01/RF-02 con avisos de rango con motivo+ejemplo y /rm que menciona el valor anterior); T1–T8 hechas. `core.py` y `db.py` completos; `commands.py` con /perfil, /rm, /rms, /inicio y /fin (sin Telegram; aviso fijo `core.NO_OPEN_SESSION`; /fin cierra y resume con `core.build_summary`): 169 tests en verde. Repo creado con primer commit.
+- Fase: en implementación. Spec, plan y tasks listos (plan §6.6 ajustado al redondeo real; RF-01/RF-02 con avisos de rango con motivo+ejemplo y /rm que menciona el valor anterior; RF-03 con horas legibles vía `core.format_start_time`); T1–T8 hechas. `core.py` y `db.py` completos; `commands.py` con /perfil, /rm, /rms, /inicio y /fin (sin Telegram; aviso fijo `core.NO_OPEN_SESSION`; /fin cierra y resume con `core.build_summary`): 172 tests en verde. Repo creado con primer commit.
 - Nombre provisional: BoxLog. Destino: GitHub como portfolio.
 - Uso inicial: solo yo; si funciona, se comparte.
 
@@ -22,7 +22,6 @@
 - **Windows como entorno de desarrollo:** los comandos de la doc deben funcionar en Windows.
 
 ## Aprendizajes y errores a evitar
-- Todavía no hay aprendizajes de código; ir aquí los fallos y hallazgos de cada tarea.
 - `round()` de Python redondea al par (banker's rounding): para el redondeo a 0,5 kg con mitades hacia arriba usar `math.floor(x * 2 + 0.5) / 2` (RF-05).
 - `PRAGMA user_version` no admite parámetros (`?`); fijarlo con `PRAGMA user_version = 1` solo cuando está en 0, para no pisar migraciones futuras.
 - El test de "sin Telegram" lee el código fuente en minúsculas: los docstrings no deben mencionar la palabra "telegram" (rompieron el test de commands.py).

@@ -156,21 +156,44 @@ def test_rms_con_argumentos_aviso(conn):
 # --- /inicio (RF-03, CL-1) ---
 
 
-def test_inicio_abre_sesion_con_marca_de_tiempo(conn):
+def _fijar_inicio(conn, session_id, moment):
+    conn.execute(
+        "UPDATE sessions SET started_at = ? WHERE id = ?",
+        (moment.isoformat(timespec="seconds"), session_id),
+    )
+    conn.commit()
+
+
+def test_inicio_abre_sesion_con_hora_legible(conn):
     texto = commands.cmd_inicio(conn, [])
     abierta = db.get_open_session(conn)
     assert abierta is not None
-    assert texto == f"Sesión iniciada {abierta['started_at']}"
+    hora = abierta["started_at"][11:16]  # HH:MM de la marca ISO interna
+    assert texto == f"Sesión iniciada a las {hora}"
 
 
-def test_inicio_con_sesion_abierta_aviso_sin_cambiar_nada(conn):
+def test_inicio_con_sesion_abierta_hoy_aviso_sin_cambiar_nada(conn):
     session_id = db.open_session(conn)
+    hoy_2035 = datetime.now().replace(hour=20, minute=35, second=0, microsecond=0)
+    _fijar_inicio(conn, session_id, hoy_2035)
     texto = commands.cmd_inicio(conn, [])
     abierta = db.get_open_session(conn)
     assert abierta["id"] == session_id  # la misma sesión
     assert conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0] == 1
-    desde = abierta["started_at"].replace("T", " ")
-    assert texto == f"Sesión abierta desde {desde}. Ciérrala con /fin"
+    assert texto == "Sesión abierta desde las 20:35. Ciérrala con /fin"
+
+
+def test_inicio_con_sesion_abierta_otro_dia_menciona_la_fecha(conn):
+    session_id = db.open_session(conn)
+    otro_dia = datetime.now().replace(
+        hour=20, minute=35, second=0, microsecond=0
+    ) - timedelta(days=2)
+    _fijar_inicio(conn, session_id, otro_dia)
+    texto = commands.cmd_inicio(conn, [])
+    assert (
+        texto
+        == f"Sesión abierta desde el {otro_dia:%d/%m} a las 20:35. Ciérrala con /fin"
+    )
 
 
 def test_inicio_con_argumentos_aviso_de_uso(conn):
@@ -184,7 +207,8 @@ def test_inicio_tras_cerrar_abre_una_nueva(conn):
     texto = commands.cmd_inicio(conn, [])
     segunda = db.get_open_session(conn)
     assert segunda["id"] != primera
-    assert texto == f"Sesión iniciada {segunda['started_at']}"
+    hora = segunda["started_at"][11:16]
+    assert texto == f"Sesión iniciada a las {hora}"
 
 
 # --- /fin (RF-04, CL-2, CL-5) ---

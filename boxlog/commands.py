@@ -14,11 +14,12 @@ def cmd_inicio(connection, args: list[str]) -> str:
         return core.usage_example("inicio")
     abierta = db.get_open_session(connection)
     if abierta is not None:
-        desde = abierta["started_at"].replace("T", " ")
+        desde = core.format_start_time(abierta["started_at"], datetime.now())
         return f"Sesión abierta desde {desde}. Ciérrala con /fin"
     session_id = db.open_session(connection)
     session = db.get_session(connection, session_id)
-    return f"Sesión iniciada {session['started_at']}"
+    a_las = core.format_start_time(session["started_at"], datetime.now())
+    return f"Sesión iniciada a {a_las}"
 
 
 def cmd_fin(connection, args: list[str]) -> str:

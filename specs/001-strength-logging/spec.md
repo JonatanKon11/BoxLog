@@ -31,6 +31,7 @@ BoxLog es un bot de Telegram personal para registrar sesiones de fuerza de cross
   - CA: ambos comandos funcionarán con sesión abierta o cerrada.
 - RF-03 Inicio de sesión: Cuando el usuario envía /inicio, el sistema deberá abrir una sesión con marca de tiempo.
   - CA: si ya hay una sesión abierta, el sistema deberá responder un aviso indicando desde cuándo está abierta y sugiriendo /fin, sin cambiar nada.
+  - CA: las horas se mostrarán en formato legible, nunca el formato interno de la base de datos: la confirmación de /inicio será "Sesión iniciada a las 20:35"; el aviso de sesión ya abierta dirá "desde las 20:35" si la sesión empezó hoy o "desde el 09/10 a las 20:35" si empezó otro día.
   - CA: una sesión olvidada se deja abierta indefinidamente; solo el aviso de /inicio la da por conocida.
   - CA: una sesión abierta sobrevive al reinicio del bot: queda guardada y sigue siendo válida después.
 - RF-04 Cierre de sesión: Cuando el usuario envía /fin con sesión abierta, el sistema deberá cerrarla y responder un resumen con: la duración de /inicio a /fin y, por cada ejercicio, el número de series, las repeticiones totales, el volumen, el peso máximo y la desviación.

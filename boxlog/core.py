@@ -145,6 +145,19 @@ def format_duration(seconds: float) -> str:
     return f"{minutes} min"
 
 
+def format_start_time(started_at: str, now: datetime) -> str:
+    """Hora legible de apertura de sesión (RF-03).
+
+    'las 20:35' si empezó hoy; 'el 09/10 a las 20:35' si empezó otro día.
+    started_at es la marca ISO de la base de datos; now permite testear.
+    """
+    start = datetime.fromisoformat(started_at)
+    hora = f"{start:%H:%M}"
+    if start.date() == now.date():
+        return f"las {hora}"
+    return f"el {start:%d/%m} a las {hora}"
+
+
 def build_summary(start: datetime, end: datetime, series: list[dict]) -> str:
     """Resumen de la sesión (RF-04).
 
