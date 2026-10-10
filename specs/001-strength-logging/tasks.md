@@ -21,12 +21,12 @@ Ordenadas por dependencia. Tests primero: cada tarea de código empieza por escr
   - Implementar `round_half_kg`, `convert_percentages`, `format_duration`, `build_summary`, `format_log_confirmation`.
   - Hecho cuando: `python -m pytest tests/test_core.py` en verde y `core` no importa Telegram ni sqlite3.
 
-- [ ] **T5. db: esquema, perfil y RM** — RF-01 (historial), RF-02, RNF-3 (base)
+- [x] **T5. db: esquema, perfil y RM** — RF-01 (historial), RF-02, RNF-3 (base)
   - Tests primero: creación de tablas con `foreign_keys=ON`, perfil solo inserción (vigente = último id), RM vigente = último id del ejercicio, lista de RM vigentes vacía y con datos.
   - Implementar en `db.py`: esquema (`profile`, `rm_history`, `sessions`, `plan_items`, `series`), inserción de perfil y RM, consultas de vigentes.
   - Hecho cuando: `python -m pytest tests/test_db.py` en verde sobre una BD temporal de `tmp_path`.
 
-- [ ] **T6. db: sesiones, plan y series** — RF-03, RF-05, RF-06, RF-07, CL-11
+- [x] **T6. db: sesiones, plan y series** — RF-03, RF-05, RF-06, RF-07, CL-11
   - Tests primero: una única sesión abierta, cierre, persistencia al cerrar y reabrir la conexión (reinicio simulado), creación/reemplazo de plan_items con `consumed`, consumo en orden, series con `plan_item_id`, restauración al deshacer y caso plan_item borrado (SET NULL), borrado de la última serie.
   - Implementar las funciones de sesión, plan y series en `db.py`.
   - Hecho cuando: `python -m pytest tests/test_db.py` en verde.
