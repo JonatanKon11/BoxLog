@@ -1,7 +1,7 @@
 # MEMORY.md — BoxLog
 
 ## Estado actual
-- Fase: en implementación. Spec, plan y tasks listos (plan §6.6 ajustado al redondeo real; RF-01/RF-02 con avisos de rango con motivo+ejemplo y /rm que menciona el valor anterior; RF-03 con horas legibles vía `core.format_start_time`); T1–T10 hechas. `core.py` y `db.py` completos; `commands.py` con los 8 comandos (sin Telegram; /hoy y /rm con nombres multipalabra vía `core.split_exercise_and_numbers`; /log consume el plan en orden y /deshacer libera el `plan_item_id` exacto): 221 tests en verde. Repo creado con primer commit.
+- Fase: 001-strength-logging cerrada (T1–T12 hechas). Spec viva actualizada; `core.py`, `db.py`, `commands.py` y `bot.py` completos; 241 tests en verde. Hay `.env` real local (ignorado por git) y los tests de config lo parchean con la fixture `sin_dotenv`.
 - Nombre provisional: BoxLog. Destino: GitHub como portfolio.
 - Uso inicial: solo yo; si funciona, se comparte.
 
@@ -28,10 +28,9 @@
 - Regla de seguridad del proyecto: todo DELETE en SQLite filtra por `session_id` + `exercise` o por `series.id`; el `ON DELETE SET NULL` de `plan_items` deja `planned_weight_kg` intacto, por lo que /deshacer no pierde el peso planificado aunque se repita /hoy.
 - `float()` de Python acepta `nan`, `inf` y notación científica (`1e3`): validar antes con regex de solo decimal simple (RF-09). Las repeticiones de /log se devuelven como `int` y la separadora `x`/`X` se normaliza antes de partir.
 - Evitar: token en el código o en git, datos personales en el repo, lógica de negocio dentro de los handlers.
+- En python-telegram-bot 22.8, `filters.COMMAND` es una instancia (no se invoca): para lista de comandos usar `filters.Command([...])`; la decisión dueño/desconocido vive en `bot.dispatch`, separada de los handlers.
+- `load_dotenv()` de python-dotenv busca subiendo desde la ubicación del módulo que lo llama (aquí `boxlog/bot.py`), no desde el directorio de trabajo: en tests hay que parchear `bot.load_dotenv`, un `chdir` no aísla.
 
 ## Próximos pasos
-1. Implementar T11 de `tasks.md` (bot: conexión, dueño y comandos desconocidos).
-2. Esquema SQLite: perfiles, ejercicios, RM + historial, sesiones, series.
-3. Módulos `core` con cálculos (porcentajes de RM) y sus tests.
-4. `commands` y `bot`: `/inicio`, `/fin`, `/hoy`, `/log`.
-5. Más adelante: WOD (tipo, cap, tiempo real), calorías METs como estimación, audios, datos de Garmin.
+1. Commit de T1–T12 (spec 001 cerrada; no subir nunca `.env` ni `data/`).
+2. Decidir la siguiente spec (v0.2: WOD, calorías METs como estimación, audios, datos de Garmin).

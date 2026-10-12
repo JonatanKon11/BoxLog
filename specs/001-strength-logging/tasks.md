@@ -52,12 +52,13 @@ Ordenadas por dependencia. Tests primero: cada tarea de código empieza por escr
   - Implementar `/log` y `/deshacer` en `commands.py`.
   - Hecho cuando: `python -m pytest tests/test_commands.py` en verde.
 
-- [ ] **T11. bot: conexión, dueño y comandos desconocidos** — RF-08, RF-12, CL-7, CL-12, RNF-1, RNF-2
+- [x] **T11. bot: conexión, dueño y comandos desconocidos** — RF-08, RF-12, CL-7, CL-12, RNF-1, RNF-2
   - Tests primero: `is_owner` con ID correcto y ajeno, texto de respuesta en español, comando desconocido y texto libre → lista de comandos; sin red real.
   - Implementar `bot.py`: `.env` (`TELEGRAM_TOKEN`, `OWNER_ID`), registro de handlers con `filters.User(OWNER_ID)`, fallbacks de comandos y texto.
   - Hecho cuando: `python -m pytest tests/test_bot.py` en verde y el diff no contiene el token (`.env` fuera de git).
 
-- [ ] **T12. Prueba de punta a punta del ciclo completo** — RF-01 a RF-12, CL-1 a CL-12 (cierre de la spec)
+- [x] **T12. Prueba de punta a punta del ciclo completo** — RF-01 a RF-12, CL-1 a CL-12 (cierre de la spec)
+  - Ajuste: los tests de `load_settings` (T11) no estaban aislados de un `.env` real: `load_dotenv()` sube desde la ubicación del módulo que lo llama, no desde el cwd; ahora parchean `bot.load_dotenv` (fixture `sin_dotenv`). Sin bug de código.
   - Tests primero: un test de ciclo `/inicio → /hoy → /log → /log → /deshacer → /fin` con BD temporal que verifica la confirmación de cada /log, el plan aplicado en orden, el valor devuelto tras /deshacer y el resumen final (duración, volumen con peso real, pares plan→real, volumen total); más el recorrido de los avisos (sin sesión, formatos inválidos, ID ajeno ignorado).
   - Implementar solo los ajustes que destapen los tests.
   - Hecho cuando: `python -m pytest` completa en verde, todos los RF y CL de la spec tienen su test y el diff final no contiene token ni datos personales.
