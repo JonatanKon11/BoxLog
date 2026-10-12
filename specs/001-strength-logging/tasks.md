@@ -41,12 +41,13 @@ Ordenadas por dependencia. Tests primero: cada tarea de código empieza por escr
   - Implementar `/inicio` y `/fin` en `commands.py`.
   - Hecho cuando: `python -m pytest tests/test_commands.py` en verde.
 
-- [ ] **T9. commands: /hoy** — RF-05, CL-2, CL-4, CL-10
+- [x] **T9. commands: /hoy** — RF-05, CL-2, CL-4, CL-10
+  - Ajuste: nombres de ejercicio multipalabra ("front squat") — `core.split_exercise_and_numbers` separa nombre (hasta el primer argumento numérico) y números; la reutilizan /hoy, /rm y /log.
   - Tests primero: conversión con redondeo y respuesta con coma decimal, sin sesión → aviso RF-04, sin RM → aviso "No tengo RM…", repetir /hoy reemplaza el plan y reinicia el orden (series anteriores intactas), porcentaje fuera de rango → aviso de uso.
   - Implementar `/hoy` en `commands.py`.
   - Hecho cuando: `python -m pytest tests/test_commands.py` en verde.
 
-- [ ] **T10. commands: /log y /deshacer** — RF-06, RF-07, CL-2, CL-3, CL-8, CL-9
+- [x] **T10. commands: /log y /deshacer** — RF-06, RF-07, CL-2, CL-3, CL-8, CL-9
   - Tests primero: serie con plan en orden y confirmación `serie N … (plan …)`, sin plan → `planned=NULL` sin error, sin sesión → aviso, formato inválido → un solo aviso de uso, /deshacer con y sin series, confirmación de lo borrado y plan_item liberado para la siguiente serie.
   - Implementar `/log` y `/deshacer` en `commands.py`.
   - Hecho cuando: `python -m pytest tests/test_commands.py` en verde.

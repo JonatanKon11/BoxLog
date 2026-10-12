@@ -22,6 +22,79 @@ def cmd_inicio(connection, args: list[str]) -> str:
     return f"Sesión iniciada a {a_las}"
 
 
+def cmd_hoy(connection, args: list[str]) -> str:
+    """/hoy <ejercicio> <porcentajes...> (RF-05): convierte el RM vigente y guarda el plan.
+
+    Reemplaza el plan anterior de ese mismo ejercicio en la sesión (CL-4).
+    """
+    abierta = db.get_open_session(connection)
+    if abierta is None:
+        return core.NO_OPEN_SESSION
+    split = core.split_exercise_and_numbers(args)
+    if split is None:
+        return core.usage_example("hoy")
+    exercise, numbers = split
+    try:
+        pcts = [core.parse_number(text) for text in numbers]
+    except ValueError:
+        return core.usage_example("hoy")
+    if core.validate_percentages(pcts):
+        return core.usage_example("hoy")
+    rm = db.get_rm(connection, exercise)
+    if rm is None:
+        return f"No tengo RM de {exercise}, cárgalo con /rm"
+    kilos = core.convert_percentages(rm, pcts)
+    db.replace_plan(connection, abierta["id"], exercise, kilos)
+    return "\n".join(
+        f"{core.format_kg(pct)}% → {core.format_kg(kg)} kg"
+        for pct, kg in zip(pcts, kilos)
+    )
+
+
+def cmd_log(connection, args: list[str]) -> str:
+    """/log <ejercicio> <peso>x<repeticiones> (RF-06): registra una serie en la sesión.
+
+    El peso es el real; el planificado sale en orden del siguiente ítem no
+    consumido de /hoy. Sin plan la serie se guarda igual (CL-3).
+    """
+    abierta = db.get_open_session(connection)
+    if abierta is None:
+        return core.NO_OPEN_SESSION
+    parsed = core.parse_log_args(args)
+    if parsed is None:
+        return core.usage_example("log")
+    exercise, weight, reps = parsed
+    session_id = abierta["id"]
+    number = db.count_series(connection, session_id, exercise) + 1
+    plan_item = db.get_next_plan_item(connection, session_id, exercise)
+    if plan_item is None:
+        planned, plan_item_id = None, None
+    else:
+        planned, plan_item_id = plan_item["weight_kg"], plan_item["id"]
+        db.consume_plan_item(connection, plan_item_id)
+    db.insert_series(
+        connection, session_id, exercise, weight, reps, planned, plan_item_id
+    )
+    return core.format_log_confirmation(exercise, number, weight, reps, planned)
+
+
+def cmd_deshacer(connection, args: list[str]) -> str:
+    """/deshacer (RF-07): borra la última serie de la sesión y libera su plan."""
+    if args:
+        return core.usage_example("deshacer")
+    abierta = db.get_open_session(connection)
+    if abierta is None:
+        return core.NO_OPEN_SESSION
+    serie = db.get_last_series(connection, abierta["id"])
+    if serie is None:
+        return core.NO_SERIES
+    if serie["plan_item_id"] is not None:
+        db.release_plan_item(connection, serie["plan_item_id"])
+    db.delete_series(connection, serie["id"])
+    weight = core.format_kg(serie["real_weight_kg"])
+    return f"Borrada: {serie['exercise']} {weight}x{serie['reps']}"
+
+
 def cmd_fin(connection, args: list[str]) -> str:
     """/fin (RF-04): cierra la sesión y responde el resumen de core (CL-2, CL-5)."""
     if args:
@@ -62,13 +135,14 @@ def cmd_perfil(connection, args: list[str]) -> str:
 
 def cmd_rm(connection, args: list[str]) -> str:
     """/rm <ejercicio> <kg> (RF-02): guarda el RM vigente; el nombre se normaliza (RF-11)."""
-    if len(args) != 2:
+    split = core.split_exercise_and_numbers(args)
+    if split is None:
         return core.usage_example("rm")
-    exercise = core.normalize_exercise(args[0])
-    if not exercise:
+    exercise, numbers = split
+    if len(numbers) != 1:
         return core.usage_example("rm")
     try:
-        kg = core.parse_number(args[1])
+        kg = core.parse_number(numbers[0])
     except ValueError:
         return core.usage_example("rm")
     aviso = core.validate_rm(kg)

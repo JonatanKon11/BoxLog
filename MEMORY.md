@@ -1,7 +1,7 @@
 # MEMORY.md — BoxLog
 
 ## Estado actual
-- Fase: en implementación. Spec, plan y tasks listos (plan §6.6 ajustado al redondeo real; RF-01/RF-02 con avisos de rango con motivo+ejemplo y /rm que menciona el valor anterior; RF-03 con horas legibles vía `core.format_start_time`); T1–T8 hechas. `core.py` y `db.py` completos; `commands.py` con /perfil, /rm, /rms, /inicio y /fin (sin Telegram; aviso fijo `core.NO_OPEN_SESSION`; /fin cierra y resume con `core.build_summary`): 172 tests en verde. Repo creado con primer commit.
+- Fase: en implementación. Spec, plan y tasks listos (plan §6.6 ajustado al redondeo real; RF-01/RF-02 con avisos de rango con motivo+ejemplo y /rm que menciona el valor anterior; RF-03 con horas legibles vía `core.format_start_time`); T1–T10 hechas. `core.py` y `db.py` completos; `commands.py` con los 8 comandos (sin Telegram; /hoy y /rm con nombres multipalabra vía `core.split_exercise_and_numbers`; /log consume el plan en orden y /deshacer libera el `plan_item_id` exacto): 221 tests en verde. Repo creado con primer commit.
 - Nombre provisional: BoxLog. Destino: GitHub como portfolio.
 - Uso inicial: solo yo; si funciona, se comparte.
 
@@ -30,7 +30,7 @@
 - Evitar: token en el código o en git, datos personales en el repo, lógica de negocio dentro de los handlers.
 
 ## Próximos pasos
-1. Implementar T9 de `tasks.md` (commands: /hoy).
+1. Implementar T11 de `tasks.md` (bot: conexión, dueño y comandos desconocidos).
 2. Esquema SQLite: perfiles, ejercicios, RM + historial, sesiones, series.
 3. Módulos `core` con cálculos (porcentajes de RM) y sus tests.
 4. `commands` y `bot`: `/inicio`, `/fin`, `/hoy`, `/log`.

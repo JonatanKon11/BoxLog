@@ -268,6 +268,314 @@ def test_fin_resumen_mas_de_una_hora(conn):
     assert "plan→real" not in texto  # sin series planificadas
 
 
+# --- /hoy (RF-05, CL-2, CL-4, CL-10) ---
+
+
+@pytest.mark.parametrize(
+    "args", [[], ["clean"], ["clean", "0"], ["clean", "121"], ["clean", "-5"], ["clean", "abc"]]
+)
+def test_hoy_argumentos_invalidos_aviso(conn, args):
+    db.open_session(conn)
+    db.save_rm(conn, "clean", 100)
+    assert commands.cmd_hoy(conn, args) == "Usa /hoy clean 70 80 85"
+    assert conn.execute("SELECT COUNT(*) FROM plan_items").fetchone()[0] == 0
+
+
+def test_hoy_sin_sesion_abierta_aviso_sin_cambiar_nada(conn):
+    assert (
+        commands.cmd_hoy(conn, ["clean", "70"]) == "No hay sesión abierta, envía /inicio"
+    )
+    assert conn.execute("SELECT COUNT(*) FROM plan_items").fetchone()[0] == 0
+
+
+def test_hoy_ejercicio_sin_rm_aviso_sin_cambiar_nada(conn):
+    db.open_session(conn)
+    assert (
+        commands.cmd_hoy(conn, ["clean", "70"])
+        == "No tengo RM de clean, cárgalo con /rm"
+    )
+    assert conn.execute("SELECT COUNT(*) FROM plan_items").fetchone()[0] == 0
+
+
+def test_hoy_convierte_y_guarda_el_plan_en_orden(conn):
+    session_id = db.open_session(conn)
+    db.save_rm(conn, "clean", 120)
+    texto = commands.cmd_hoy(conn, ["clean", "70", "80", "85"])
+    assert texto == "70% → 84 kg\n80% → 96 kg\n85% → 102 kg"
+    assert db.get_next_plan_item(conn, session_id, "clean")["weight_kg"] == 84
+
+
+def test_hoy_porcentaje_con_decimal(conn):
+    session_id = db.open_session(conn)
+    db.save_rm(conn, "clean", 120)
+    texto = commands.cmd_hoy(conn, ["clean", "77,5"])
+    assert texto == "77,5% → 93 kg"
+    assert db.get_next_plan_item(conn, session_id, "clean")["weight_kg"] == 93
+
+
+def test_hoy_nombre_normalizado_comparte_el_rm(conn):
+    session_id = db.open_session(conn)
+    db.save_rm(conn, "clean", 100)
+    texto = commands.cmd_hoy(conn, ["Clean", "70"])
+    assert texto == "70% → 70 kg"
+    assert db.get_next_plan_item(conn, session_id, "clean") is not None
+
+
+def test_hoy_valores_repetidos_se_guardan_completos_y_en_orden(conn):
+    session_id = db.open_session(conn)
+    db.save_rm(conn, "clean", 120)
+    args = ["clean", "70", "80", "85", "70", "80", "85", "70", "80", "85"]
+    texto = commands.cmd_hoy(conn, args)
+    assert texto.splitlines() == ["70% → 84 kg", "80% → 96 kg", "85% → 102 kg"] * 3
+    items = conn.execute(
+        "SELECT position, weight_kg FROM plan_items ORDER BY position"
+    ).fetchall()
+    assert [item["weight_kg"] for item in items] == [84, 96, 102] * 3
+
+
+def test_hoy_reemplaza_el_plan_del_mismo_ejercicio(conn):
+    session_id = db.open_session(conn)
+    db.save_rm(conn, "clean", 100)
+    db.save_rm(conn, "front", 60)
+    commands.cmd_hoy(conn, ["clean", "70", "80"])
+    commands.cmd_hoy(conn, ["front", "80"])
+    commands.cmd_hoy(conn, ["clean", "90"])  # repite /hoy de clean
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) FROM plan_items WHERE exercise = 'clean'"
+        ).fetchone()[0]
+        == 1
+    )
+    assert db.get_next_plan_item(conn, session_id, "clean")["weight_kg"] == 90
+    assert db.get_next_plan_item(conn, session_id, "front")["weight_kg"] == 48  # intacto
+
+
+def test_hoy_repite_reinicia_el_orden_del_consumo(conn):
+    session_id = db.open_session(conn)
+    db.save_rm(conn, "clean", 100)
+    commands.cmd_hoy(conn, ["clean", "70"])
+    item = db.get_next_plan_item(conn, session_id, "clean")
+    db.consume_plan_item(conn, item["id"])
+    commands.cmd_hoy(conn, ["clean", "80"])  # el plan nuevo empieza de cero
+    assert db.get_next_plan_item(conn, session_id, "clean")["weight_kg"] == 80
+
+
+def test_hoy_nombre_multipalabra(conn):
+    session_id = db.open_session(conn)
+    db.save_rm(conn, "front squat", 140)
+    texto = commands.cmd_hoy(conn, ["front", "squat", "70", "80"])
+    assert texto == "70% → 98 kg\n80% → 112 kg"
+    assert db.get_next_plan_item(conn, session_id, "front squat")["weight_kg"] == 98
+
+
+def test_hoy_multipalabra_usa_el_rm_de_su_ejercicio(conn):
+    session_id = db.open_session(conn)
+    db.save_rm(conn, "front squat", 140)
+    db.save_rm(conn, "clean", 100)
+    texto = commands.cmd_hoy(conn, ["front", "squat", "70"])
+    assert texto == "70% → 98 kg"  # 140·0,7, no el RM de clean
+    assert db.get_next_plan_item(conn, session_id, "front squat")["weight_kg"] == 98
+    assert db.get_next_plan_item(conn, session_id, "clean") is None
+
+
+def test_hoy_multipalabra_sin_rm_avisa(conn):
+    db.open_session(conn)
+    db.save_rm(conn, "clean", 100)
+    assert (
+        commands.cmd_hoy(conn, ["front", "squat", "70"])
+        == "No tengo RM de front squat, cárgalo con /rm"
+    )
+
+
+def test_hoy_sin_nombre_aviso_de_uso(conn):
+    db.open_session(conn)
+    db.save_rm(conn, "clean", 100)
+    assert commands.cmd_hoy(conn, ["70", "80"]) == "Usa /hoy clean 70 80 85"
+    assert conn.execute("SELECT COUNT(*) FROM plan_items").fetchone()[0] == 0
+
+
+def test_rm_nombre_multipalabra_normalizado(conn):
+    texto = commands.cmd_rm(conn, ["Front", "Squat", "170"])
+    assert texto == "RM de front squat guardado: 170 kg"
+    assert db.get_rm(conn, "front squat") == 170
+    assert db.get_rm(conn, "Front Squat") is None
+
+
+# --- /log (RF-06, CL-2, CL-3, CL-8) ---
+
+
+def test_log_sin_sesion_abierta_aviso_sin_guardar(conn):
+    assert (
+        commands.cmd_log(conn, ["clean", "84x5"]) == "No hay sesión abierta, envía /inicio"
+    )
+    assert conn.execute("SELECT COUNT(*) FROM series").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        [],
+        ["clean"],
+        ["clean", "84"],
+        ["clean", "84x"],
+        ["clean", "x5"],
+        ["clean", "84x5.5"],
+        ["clean", "84x0"],
+        ["clean", "84x-5"],
+        ["clean", "1e3x5"],
+        ["clean", "84x5", "extra"],
+        ["84x5"],
+    ],
+)
+def test_log_argumentos_invalidos_aviso_unico_sin_guardar(conn, args):
+    db.open_session(conn)
+    assert commands.cmd_log(conn, args) == "Usa /log clean 84x5"
+    assert conn.execute("SELECT COUNT(*) FROM series").fetchone()[0] == 0
+
+
+def test_log_sin_plan_se_guarda_con_planificado_vacio(conn):
+    session_id = db.open_session(conn)
+    texto = commands.cmd_log(conn, ["clean", "84x5"])
+    assert texto == "clean · serie 1: 84 kg × 5"
+    serie = db.list_series(conn, session_id)[0]
+    assert serie["planned_weight_kg"] is None and serie["plan_item_id"] is None
+
+
+def test_log_con_plan_toma_el_siguiente_en_orden(conn):
+    session_id = db.open_session(conn)
+    db.save_rm(conn, "clean", 100)
+    commands.cmd_hoy(conn, ["clean", "70", "80"])
+    assert (
+        commands.cmd_log(conn, ["clean", "70x5"])
+        == "clean · serie 1: 70 kg × 5 (plan 70)"
+    )
+    assert (
+        commands.cmd_log(conn, ["clean", "72x5"])
+        == "clean · serie 2: 72 kg × 5 (plan 80)"
+    )
+    series = db.list_series(conn, session_id)
+    assert [s["planned_weight_kg"] for s in series] == [70, 80]
+    assert all(s["plan_item_id"] is not None for s in series)
+
+
+def test_log_plan_con_valores_repetidos_consumidos_en_orden(conn):
+    session_id = db.open_session(conn)
+    db.save_rm(conn, "clean", 120)
+    commands.cmd_hoy(
+        conn, ["clean", "70", "80", "85", "70", "80", "85", "70", "80", "85"]
+    )
+    for peso in (84, 96, 102, 84, 96, 102, 84, 96, 102):
+        commands.cmd_log(conn, ["clean", f"{peso}x5"])
+    series = db.list_series(conn, session_id)
+    assert [s["planned_weight_kg"] for s in series] == [84, 96, 102] * 3
+    assert len({s["plan_item_id"] for s in series}) == 9  # cada ítem, solo una vez
+
+
+def test_log_real_distinto_del_plan(conn):
+    session_id = db.open_session(conn)
+    db.save_rm(conn, "clean", 120)
+    commands.cmd_hoy(conn, ["clean", "80"])  # 96 kg
+    texto = commands.cmd_log(conn, ["clean", "95x5"])
+    assert texto == "clean · serie 1: 95 kg × 5 (plan 96)"
+    serie = db.list_series(conn, session_id)[0]
+    assert serie["real_weight_kg"] == 95 and serie["planned_weight_kg"] == 96
+
+
+def test_log_mas_que_valores_de_plan_sigue_guardando(conn):
+    session_id = db.open_session(conn)
+    db.save_rm(conn, "clean", 100)
+    commands.cmd_hoy(conn, ["clean", "70"])
+    commands.cmd_log(conn, ["clean", "70x5"])
+    texto = commands.cmd_log(conn, ["clean", "75x5"])  # plan agotado (CL-3)
+    assert texto == "clean · serie 2: 75 kg × 5"
+    serie = db.list_series(conn, session_id)[1]
+    assert serie["planned_weight_kg"] is None and serie["plan_item_id"] is None
+
+
+def test_log_nombre_multipalabra(conn):
+    session_id = db.open_session(conn)
+    db.save_rm(conn, "front squat", 140)
+    commands.cmd_hoy(conn, ["front", "squat", "70"])  # 98 kg
+    texto = commands.cmd_log(conn, ["front", "squat", "95x3"])
+    assert texto == "front squat · serie 1: 95 kg × 3 (plan 98)"
+    serie = db.list_series(conn, session_id)[0]
+    assert serie["exercise"] == "front squat" and serie["planned_weight_kg"] == 98
+
+
+def test_log_mayusculas_y_espacios_extra_comparten_serie(conn):
+    session_id = db.open_session(conn)
+    db.save_rm(conn, "clean", 100)
+    commands.cmd_hoy(conn, ["clean", "70", "80"])
+    commands.cmd_log(conn, ["Clean", "70x5"])
+    texto = commands.cmd_log(conn, ["  CLEAN  ", "72x5"])
+    assert texto == "clean · serie 2: 72 kg × 5 (plan 80)"
+    assert [s["exercise"] for s in db.list_series(conn, session_id)] == ["clean", "clean"]
+
+
+def test_log_tras_repetir_hoy_reinicia_el_plan(conn):
+    session_id = db.open_session(conn)
+    db.save_rm(conn, "clean", 100)
+    commands.cmd_hoy(conn, ["clean", "70"])
+    commands.cmd_log(conn, ["clean", "70x5"])  # consume el primer plan
+    commands.cmd_hoy(conn, ["clean", "70", "80"])  # repite /hoy → orden nuevo
+    texto = commands.cmd_log(conn, ["clean", "71x5"])
+    assert texto == "clean · serie 2: 71 kg × 5 (plan 70)"
+    assert db.list_series(conn, session_id)[0]["planned_weight_kg"] == 70  # la vieja no cambia
+
+
+# --- /deshacer (RF-07, CL-2, CL-9) ---
+
+
+def test_deshacer_sin_sesion_abierta_aviso(conn):
+    assert commands.cmd_deshacer(conn, []) == "No hay sesión abierta, envía /inicio"
+
+
+def test_deshacer_con_argumentos_aviso_de_uso(conn):
+    db.open_session(conn)
+    assert commands.cmd_deshacer(conn, ["x"]) == "Usa /deshacer (sin nada más)"
+
+
+def test_deshacer_sin_series_aviso(conn):
+    db.open_session(conn)
+    assert commands.cmd_deshacer(conn, []) == "No hay series en esta sesión"
+
+
+def test_deshacer_borra_la_ultima_y_confirma(conn):
+    session_id = db.open_session(conn)
+    commands.cmd_log(conn, ["clean", "84x5"])
+    commands.cmd_log(conn, ["clean", "82x5"])
+    texto = commands.cmd_deshacer(conn, [])
+    assert texto == "Borrada: clean 82x5"
+    series = db.list_series(conn, session_id)
+    assert len(series) == 1 and series[0]["real_weight_kg"] == 84
+
+
+def test_deshacer_libera_el_mismo_plan_item(conn):
+    session_id = db.open_session(conn)
+    db.save_rm(conn, "clean", 100)
+    commands.cmd_hoy(conn, ["clean", "70", "80"])
+    commands.cmd_log(conn, ["clean", "70x5"])  # ítem 1 (70)
+    commands.cmd_log(conn, ["clean", "80x5"])  # ítem 2 (80)
+    commands.cmd_deshacer(conn, [])  # borra la serie del ítem 2
+    texto = commands.cmd_log(conn, ["clean", "90x5"])
+    assert texto == "clean · serie 2: 90 kg × 5 (plan 80)"  # repite ese ítem exacto
+    states = conn.execute(
+        "SELECT position, consumed FROM plan_items ORDER BY position"
+    ).fetchall()
+    assert [(i["position"], i["consumed"]) for i in states] == [(1, 1), (2, 1)]
+
+
+def test_deshacer_solo_borra_la_ultima(conn):
+    session_id = db.open_session(conn)
+    commands.cmd_log(conn, ["clean", "84x5"])
+    commands.cmd_log(conn, ["front", "squat", "60x3"])  # multipalabra
+    commands.cmd_log(conn, ["clean", "82x5"])
+    ids = [s["id"] for s in db.list_series(conn, session_id)]
+    texto = commands.cmd_deshacer(conn, [])
+    assert texto == "Borrada: clean 82x5"
+    assert [s["id"] for s in db.list_series(conn, session_id)] == ids[:2]
+
+
 # --- separación de capas (constitución 3) ---
 
 

@@ -29,27 +29,61 @@ def normalize_exercise(text: str) -> str:
     return " ".join(text.lower().split())
 
 
+def _is_number(text: str) -> bool:
+    """¿El texto es un número decimal (coma o punto)?"""
+    try:
+        parse_number(text)
+        return True
+    except ValueError:
+        return False
+
+
+def _is_weight_reps(text: str) -> bool:
+    """¿El texto tiene el formato <peso>x<repeticiones>?"""
+    return text.replace("X", "x").count("x") == 1
+
+
+def split_exercise_and_numbers(
+    args: list[str], is_number=None
+) -> tuple[str, list[str]] | None:
+    """(ejercicio normalizado, números) hasta el primer argumento numérico (RF-11).
+
+    El nombre del ejercicio son todas las palabras iniciales hasta el primer
+    argumento numérico; el resto se devuelve como están. None si falta el
+    nombre o no hay números. is_number permite reutilizar la separación en
+    /log, cuyo "número" es <peso>x<repeticiones>.
+    """
+    if is_number is None:
+        is_number = _is_number
+    index = 0
+    while index < len(args) and not is_number(args[index]):
+        index += 1
+    exercise = normalize_exercise(" ".join(args[:index]))
+    numbers = args[index:]
+    if not exercise or not numbers:
+        return None
+    return exercise, numbers
+
+
 def parse_log_args(args: list[str]) -> tuple[str, float, int] | None:
     """Devuelve (ejercicio, peso, repeticiones) de /log, o None si el formato es inválido.
 
     Acepta la separadora en minúscula o mayúscula (84x5 y 84X5);
     las repeticiones deben ser enteras y se devuelven como int.
     """
-    if len(args) < 2:
+    split = split_exercise_and_numbers(args, _is_weight_reps)
+    if split is None:
         return None
-    weight_reps = args[-1].replace("X", "x")
-    if weight_reps.count("x") != 1:
+    exercise, numbers = split
+    if len(numbers) != 1:
         return None
-    weight_text, reps_text = weight_reps.split("x")
+    weight_text, reps_text = numbers[0].replace("X", "x").split("x")
     try:
         weight = parse_number(weight_text)
         reps = parse_number(reps_text)
     except ValueError:
         return None
     if weight <= 0 or reps <= 0 or not reps.is_integer():
-        return None
-    exercise = normalize_exercise(" ".join(args[:-1]))
-    if not exercise:
         return None
     return exercise, weight, int(reps)
 
@@ -72,6 +106,7 @@ _USAGE_EXAMPLES = {
 
 
 NO_OPEN_SESSION = "No hay sesión abierta, envía /inicio"
+NO_SERIES = "No hay series en esta sesión"
 
 
 def help_text() -> str:

@@ -18,6 +18,7 @@ from boxlog.core import (
     parse_log_args,
     parse_number,
     round_half_kg,
+    split_exercise_and_numbers,
     usage_example,
     validate_percentages,
     validate_profile,
@@ -70,6 +71,30 @@ def test_normalize_exercise_colapsa_espacios_multiples():
 
 def test_normalize_exercise_mismo_ejercicio_con_variaciones():
     assert normalize_exercise("Clean") == normalize_exercise("clean  ")
+
+
+# --- split_exercise_and_numbers (RF-11) ---
+
+
+def test_split_nombre_multipalabra_hasta_el_primer_numero():
+    assert split_exercise_and_numbers(["front", "squat", "70", "80"]) == (
+        "front squat",
+        ["70", "80"],
+    )
+
+
+def test_split_normaliza_el_nombre():
+    assert split_exercise_and_numbers(["Clean", "100"]) == ("clean", ["100"])
+
+
+def test_split_sin_nombre_devuelve_none():
+    assert split_exercise_and_numbers(["70", "80"]) is None
+    assert split_exercise_and_numbers([]) is None
+
+
+def test_split_sin_numeros_devuelve_none():
+    assert split_exercise_and_numbers(["clean"]) is None
+    assert split_exercise_and_numbers(["clean", "abc"]) is None
 
 
 # --- parse_log_args (RF-06, RF-09, RF-10, RF-11) ---
