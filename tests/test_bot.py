@@ -4,6 +4,7 @@ import ast
 from pathlib import Path
 
 import pytest
+from telegram.error import NetworkError, TimedOut
 
 from boxlog import bot, core, db
 
@@ -123,6 +124,46 @@ def test_load_settings_owner_id_no_numerico(tmp_path, monkeypatch, sin_dotenv):
     with pytest.raises(SystemExit) as excinfo:
         bot.load_settings()
     assert "OWNER_ID" in str(excinfo.value)
+
+
+# --- errores de conexión: qué se loguea (T11, ajuste) ---
+
+
+def _value_error_con_tb():
+    try:
+        raise ValueError("algo falló por dentro")
+    except ValueError as error:
+        return error
+
+
+def test_error_red_loguea_una_linea_sin_traceback():
+    texto = bot.format_error_log(NetworkError("connection refused"))
+    assert texto == "Sin conexión con Telegram, reintentando..."
+    assert "\n" not in texto
+    assert "Traceback" not in texto
+
+
+def test_timeout_loguea_una_linea_sin_traceback():
+    texto = bot.format_error_log(TimedOut("timed out"))
+    assert texto == "Sin conexión con Telegram, reintentando..."
+    assert "\n" not in texto
+    assert "Traceback" not in texto
+
+
+def test_otro_error_loguea_completo_con_traceback():
+    texto = bot.format_error_log(_value_error_con_tb())
+    assert "ValueError: algo falló por dentro" in texto
+    assert "Traceback" in texto
+
+
+def test_el_token_nunca_aparece_en_el_log():
+    token = "999999:AAAA-token-secreto"
+    completo = bot.format_error_log(ValueError(f"401 Unauthorized, token {token}"), token)
+    assert token not in completo
+    assert "***" in completo  # redactado
+    corto = bot.format_error_log(NetworkError(f"falla con {token}"), token)
+    assert token not in corto
+    assert corto == "Sin conexión con Telegram, reintentando..."
 
 
 # --- separación de capas (constitución 3) ---

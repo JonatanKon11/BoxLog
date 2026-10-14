@@ -5,15 +5,21 @@ mensaje a la función de commands.py y responder su texto. Toda la lógica
 de entrenamiento vive en core.py, db.py y commands.py (sin mensajes).
 """
 
+import logging
 import os
+import traceback
 from pathlib import Path
 from typing import NamedTuple
 
 from dotenv import load_dotenv
+from telegram.error import NetworkError, TimedOut
 
 from boxlog import commands, core, db
 
 DATA_PATH = Path("data") / "boxlog.db"
+logger = logging.getLogger(__name__)
+
+NETWORK_ERROR_TEXT = "Sin conexión con Telegram, reintentando..."
 
 
 class Settings(NamedTuple):
@@ -58,6 +64,22 @@ def dispatch(user_id, owner_id: int, command, args: list[str], connection) -> st
     if handler is None:
         return core.help_text()
     return handler(connection, args)
+
+
+def format_error_log(error: BaseException, token: str = "") -> str:
+    """Texto a loguear para un error de un handler, decidido sin conexión (RF-08).
+
+    NetworkError y TimedOut son fugas de red: una línea corta y sin traceback,
+    porque la librería reintenta sola. Cualquier otro error va completo con su
+    traceback. El token se redacta del texto en cualquier caso.
+    """
+    if isinstance(error, (NetworkError, TimedOut)):
+        text = NETWORK_ERROR_TEXT
+    else:
+        text = "".join(traceback.format_exception(error)).rstrip()
+    if token:
+        text = text.replace(token, "***")
+    return text
 
 
 def load_settings() -> Settings:
@@ -109,11 +131,16 @@ def main() -> None:
         if text is not None:
             await update.message.reply_text(text)
 
+    async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+        # Errores de red: una línea y fuera; el resto, completo (RF-08).
+        logger.error(format_error_log(context.error, settings.token))
+
     for name in COMMANDS:
         app.add_handler(CommandHandler(name, make_command_handler(name)))
     conocidos = sorted(COMMANDS)
     app.add_handler(MessageHandler(filters.COMMAND & ~filters.Command(conocidos), unknown_command))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, free_text))
+    app.add_error_handler(on_error)
 
     app.run_polling()
 

@@ -1,7 +1,7 @@
 # MEMORY.md — BoxLog
 
 ## Estado actual
-- Fase: 001-strength-logging cerrada (T1–T12 hechas). Spec viva actualizada; `core.py`, `db.py`, `commands.py` y `bot.py` completos; 241 tests en verde. Hay `.env` real local (ignorado por git) y los tests de config lo parchean con la fixture `sin_dotenv`.
+- Fase: 001-strength-logging cerrada (T1–T12 hechas + ajuste de T11 en `bot.py`). Spec viva actualizada; `core.py`, `db.py`, `commands.py` y `bot.py` completos; 245 tests en verde. Hay `.env` real local (ignorado por git) y los tests de config lo parchean con la fixture `sin_dotenv`.
 - Nombre provisional: BoxLog. Destino: GitHub como portfolio.
 - Uso inicial: solo yo; si funciona, se comparte.
 
@@ -30,6 +30,7 @@
 - Evitar: token en el código o en git, datos personales en el repo, lógica de negocio dentro de los handlers.
 - En python-telegram-bot 22.8, `filters.COMMAND` es una instancia (no se invoca): para lista de comandos usar `filters.Command([...])`; la decisión dueño/desconocido vive en `bot.dispatch`, separada de los handlers.
 - `load_dotenv()` de python-dotenv busca subiendo desde la ubicación del módulo que lo llama (aquí `boxlog/bot.py`), no desde el directorio de trabajo: en tests hay que parchear `bot.load_dotenv`, un `chdir` no aísla.
+- Sin `add_error_handler`, python-telegram-bot imprime el traceback completo ("No error handlers are registered") por cada reintento de red: registrar uno y decidir el texto con `bot.format_error_log(error, token)` (NetworkError/TimedOut → una línea; resto → completo; token redactado siempre).
 
 ## Próximos pasos
 1. Commit de T1–T12 (spec 001 cerrada; no subir nunca `.env` ni `data/`).

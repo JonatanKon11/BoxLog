@@ -53,6 +53,7 @@ Ordenadas por dependencia. Tests primero: cada tarea de código empieza por escr
   - Hecho cuando: `python -m pytest tests/test_commands.py` en verde.
 
 - [x] **T11. bot: conexión, dueño y comandos desconocidos** — RF-08, RF-12, CL-7, CL-12, RNF-1, RNF-2
+  - Ajuste: error handler con `app.add_error_handler`; `bot.format_error_log(error, token)` (pura) devuelve una línea corta sin traceback para `NetworkError`/`TimedOut` y el texto completo con traceback para el resto, redactando siempre el token.
   - Tests primero: `is_owner` con ID correcto y ajeno, texto de respuesta en español, comando desconocido y texto libre → lista de comandos; sin red real.
   - Implementar `bot.py`: `.env` (`TELEGRAM_TOKEN`, `OWNER_ID`), registro de handlers con `filters.User(OWNER_ID)`, fallbacks de comandos y texto.
   - Hecho cuando: `python -m pytest tests/test_bot.py` en verde y el diff no contiene el token (`.env` fuera de git).
