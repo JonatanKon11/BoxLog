@@ -30,11 +30,13 @@ BoxLog es un bot de Telegram personal para registrar sesiones de fuerza de cross
   - CA: cuando el usuario envía `/rms`, el sistema deberá responder la lista de RM vigentes; si no hay ninguno, responderá un aviso sugiriendo `/rm`.
   - CA: ambos comandos funcionarán con sesión abierta o cerrada.
 - RF-03 Inicio de sesión: Cuando el usuario envía /inicio, el sistema deberá abrir una sesión con marca de tiempo.
+  - [Modificado por 002: las marcas se guardan en UTC y se muestran en hora local (UTC-3); ver RF-02 de la 002 y la migración RF-06 de la 002.]
   - CA: si ya hay una sesión abierta, el sistema deberá responder un aviso indicando desde cuándo está abierta y sugiriendo /fin, sin cambiar nada.
   - CA: las horas se mostrarán en formato legible, nunca el formato interno de la base de datos: la confirmación de /inicio será "Sesión iniciada a las 20:35"; el aviso de sesión ya abierta dirá "desde las 20:35" si la sesión empezó hoy o "desde el 09/10 a las 20:35" si empezó otro día.
   - CA: una sesión olvidada se deja abierta indefinidamente; solo el aviso de /inicio la da por conocida.
   - CA: una sesión abierta sobrevive al reinicio del bot: queda guardada y sigue siendo válida después.
 - RF-04 Cierre de sesión: Cuando el usuario envía /fin con sesión abierta, el sistema deberá cerrarla y responder un resumen con: la duración de /inicio a /fin y, por cada ejercicio, el número de series, las repeticiones totales, el volumen, el peso máximo y la desviación.
+  - [Modificado por 002: el par plan→real de un plan con rango se muestra informativo como "64-68->66" (RF-05 de la 002).]
   - CA: la duración se mostrará como "1 h 23 min" o, si dura menos de una hora, "45 min".
   - CA: el volumen (suma de kilos por repeticiones) y el peso máximo usarán siempre el peso real.
   - CA: la desviación se mostrará por ejercicio como lista de pares de las series que tuvieron plan, con formato "plan→real: 84→82, 96→96"; los ejercicios sin series planificadas no muestran desviación.
@@ -42,6 +44,7 @@ BoxLog es un bot de Telegram personal para registrar sesiones de fuerza de cross
   - CA: si no hay series, el resumen lo indicará en una línea.
   - CA: si no hay sesión abierta, el sistema deberá responder "No hay sesión abierta, envía /inicio" sin cambiar nada.
 - RF-05 Conversión de RM: Cuando el usuario envía `/hoy <ejercicio> <porcentajes...>` (p. ej. /hoy clean 70 80 85), el sistema deberá responder los kilos equivalentes de cada porcentaje con el RM vigente de ese ejercicio.
+  - [Modificado por 002: la entrada admite además repeticiones y rangos en el orden valor x repeticiones — "65x3", "80-85x1", "80-85" — con sus validaciones (RF-03 de la 002).]
   - CA: cada resultado se redondeará al 0,5 kg más cercano, con las mitades redondeadas hacia arriba (123,25 → 123,5; 123,75 → 124,0; 124,25 → 124,5).
   - CA: los porcentajes aceptan decimales y deben estar entre 1 y 120; fuera de ese rango o sin porcentajes se aplica RF-09.
   - CA: el resultado será el plan de la sesión para ese ejercicio; el plan termina al cerrar la sesión.
@@ -49,6 +52,7 @@ BoxLog es un bot de Telegram personal para registrar sesiones de fuerza de cross
   - CA: si el ejercicio no tiene RM, responderá el aviso "No tengo RM de <ejercicio>, cárgalo con /rm" sin cambiar nada.
   - CA: si el usuario repite /hoy para el mismo ejercicio en la misma sesión, el plan anterior se reemplaza y el orden de los valores se reinicia; el nuevo plan solo afecta a las series que se registren después, las ya guardadas conservan su peso planificado.
 - RF-06 Registro de serie: Cuando el usuario envía `/log <ejercicio> <peso>x<repeticiones>` (p. ej. /log clean 84x5), el sistema deberá guardar la serie dentro de la sesión actual.
+  - [Modificado por 002: si la serie toma un plan con repeticiones o rango, la confirmación lo muestra ("(plan 66 kg x 1)", "(plan 64-68 kg x 1)") y la serie guarda su marca `logged_at` en UTC (RF-01 y RF-04 de la 002).]
   - CA: el peso del mensaje es el peso real; el peso planificado se tomará, en orden, del siguiente valor no consumido del plan vigente de /hoy para ese ejercicio en la sesión actual.
   - CA: si el ejercicio no tiene plan o el plan se agotó, la serie se guardará con el planificado vacío; un /log nunca se rechaza por falta de plan.
   - CA: si no hay sesión abierta, responderá el aviso de RF-04 sin guardar nada.
