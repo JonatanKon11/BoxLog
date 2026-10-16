@@ -2,9 +2,12 @@
 
 import sqlite3
 
+from datetime import datetime, timedelta, timezone
+
 import pytest
 
 from boxlog import db
+from boxlog.core import PlannedSet
 
 
 @pytest.fixture
@@ -29,7 +32,7 @@ def test_connect_crea_la_carpeta_contenedora_si_no_existe(tmp_path):
 def test_connect_en_memoria_no_necesita_carpeta():
     connection = db.connect(":memory:")
     db.init_schema(connection)
-    assert connection.execute("PRAGMA user_version").fetchone()[0] == 1
+    assert connection.execute("PRAGMA user_version").fetchone()[0] == 2
     connection.close()
 
 
@@ -57,11 +60,11 @@ def test_init_schema_preserva_los_datos_existentes(conn):
     db.save_rm(conn, "clean", 100)
     db.init_schema(conn)
     assert db.get_rm(conn, "clean") == 100
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 1  # versión intacta
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 2  # versión intacta (v2)
 
 
-def test_init_schema_fija_user_version_en_1(conn):
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
+def test_init_schema_fija_user_version_en_2(conn):
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 2
 
 
 def test_init_schema_no_cambia_una_version_existente(conn):
@@ -283,3 +286,168 @@ def test_plan_item_borrado_deja_null_pero_conserva_el_planificado(conn):
     serie = db.list_series(conn, sid)[0]
     assert serie["plan_item_id"] is None  # ON DELETE SET NULL
     assert serie["planned_weight_kg"] == 84  # el plan de la serie se conserva
+
+
+# --- esquema v2, UTC y copia del plan (T4: RF-01, RF-02, RF-06, A-2, A-3) ---
+
+
+def _columnas(connection, tabla):
+    return {row["name"] for row in connection.execute(f"PRAGMA table_info({tabla})")}
+
+
+def test_base_nueva_es_v2_con_las_columnas_nuevas(conn):
+    assert {"reps", "range_max_kg"} <= _columnas(conn, "plan_items")
+    assert {"planned_reps", "planned_max_kg"} <= _columnas(conn, "series")
+    assert "logged_at" not in _columnas(conn, "series")  # A-2: la hora de la serie es created_at
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 2  # CL-11
+
+
+def test_init_schema_en_v2_es_no_op(conn):
+    db.init_schema(conn)
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 2
+
+
+def test_now_es_utc_en_el_mismo_formato_iso():
+    marca = db._now()
+    parseada = datetime.fromisoformat(marca)
+    assert parseada.tzinfo is None  # convención de la 002: marca sin huso = UTC (core._as_utc)
+    ahora = datetime.now(timezone.utc).replace(tzinfo=None)
+    assert abs(ahora - parseada) < timedelta(seconds=5)
+
+
+def test_marcas_nuevas_se_guardan_en_utc(conn, monkeypatch):
+    fija = "2026-10-16T12:00:00"
+    monkeypatch.setattr(db, "_now", lambda: fija)
+    sid = db.open_session(conn)
+    db.save_profile(conn, 78, 175)
+    db.save_rm(conn, "clean", 100)
+    db.insert_series(conn, sid, "clean", 84, 5, None, None)
+    marcas = [
+        db.get_open_session(conn)["started_at"],
+        conn.execute("SELECT created_at FROM profile").fetchone()[0],
+        conn.execute("SELECT created_at FROM rm_history").fetchone()[0],
+        conn.execute("SELECT created_at FROM series").fetchone()[0],
+    ]
+    assert marcas == [fija] * 4
+
+
+def test_replace_plan_con_rangos_y_reps(conn):
+    sid = db.open_session(conn)
+    db.replace_plan(
+        conn,
+        sid,
+        "clean",
+        [PlannedSet(64.0, 68.0, 1), PlannedSet(70.0, None, 3), PlannedSet(80.0, 85.0, None)],
+    )
+    primero = db.get_next_plan_item(conn, sid, "clean")
+    assert (primero["weight_kg"], primero["range_max_kg"], primero["reps"]) == (
+        64.0,
+        68.0,
+        1,
+    )
+    db.consume_plan_item(conn, primero["id"])
+    segundo = db.get_next_plan_item(conn, sid, "clean")
+    assert (segundo["weight_kg"], segundo["range_max_kg"], segundo["reps"]) == (
+        70.0,
+        None,
+        3,
+    )
+    db.consume_plan_item(conn, segundo["id"])
+    tercero = db.get_next_plan_item(conn, sid, "clean")
+    assert (tercero["weight_kg"], tercero["range_max_kg"], tercero["reps"]) == (
+        80.0,
+        85.0,
+        None,
+    )
+
+
+def test_replace_plan_acepta_solo_pesos_como_en_la_001(conn):
+    # Compatibilidad: la llamada actual de commands.py pasa solo pesos.
+    sid = db.open_session(conn)
+    db.replace_plan(conn, sid, "clean", [84.0, 96.0])
+    item = db.get_next_plan_item(conn, sid, "clean")
+    assert (item["weight_kg"], item["range_max_kg"], item["reps"]) == (84.0, None, None)
+
+
+def test_insert_series_copia_el_plan_a_la_serie(conn):
+    sid = db.open_session(conn)
+    db.replace_plan(conn, sid, "clean", [PlannedSet(64.0, 68.0, 1)])
+    item = db.get_next_plan_item(conn, sid, "clean")
+    db.insert_series(
+        conn,
+        sid,
+        "clean",
+        66,
+        2,
+        item["weight_kg"],
+        item["id"],
+        planned_max_kg=item["range_max_kg"],
+        planned_reps=item["reps"],
+    )
+    serie = db.list_series(conn, sid)[0]
+    assert (serie["planned_weight_kg"], serie["planned_max_kg"], serie["planned_reps"]) == (
+        64.0,
+        68.0,
+        1,
+    )
+
+
+def test_insert_series_sin_extras_deja_null(conn):
+    # Compatibilidad: la llamada actual de commands.py no pasa reps ni máximo (A-3).
+    sid = db.open_session(conn)
+    db.replace_plan(conn, sid, "clean", [84.0])
+    item = db.get_next_plan_item(conn, sid, "clean")
+    db.insert_series(conn, sid, "clean", 84, 5, item["weight_kg"], item["id"])
+    db.insert_series(conn, sid, "front squat", 140, 5, None, None)
+    con_plan, sin_plan = db.list_series(conn, sid)
+    assert con_plan["planned_max_kg"] is None and con_plan["planned_reps"] is None
+    assert sin_plan["planned_weight_kg"] is None
+    assert sin_plan["planned_max_kg"] is None and sin_plan["planned_reps"] is None
+
+
+def test_list_series_lee_de_la_serie_sin_join(conn):
+    # El rango/reps de la serie no dependen de plan_items: repetir /hoy no los toca (A-3).
+    sid = db.open_session(conn)
+    db.replace_plan(conn, sid, "clean", [PlannedSet(64.0, 68.0, 1)])
+    item = db.get_next_plan_item(conn, sid, "clean")
+    db.insert_series(
+        conn,
+        sid,
+        "clean",
+        66,
+        2,
+        item["weight_kg"],
+        item["id"],
+        planned_max_kg=item["range_max_kg"],
+        planned_reps=item["reps"],
+    )
+    db.replace_plan(conn, sid, "clean", [PlannedSet(50.0, 55.0, 1)])  # plan posterior distinto
+    serie = db.list_series(conn, sid)[0]
+    assert serie["planned_max_kg"] == 68.0 and serie["planned_reps"] == 1
+    assert db.get_last_series(conn, sid)["planned_weight_kg"] == 64.0
+
+
+def test_consumo_en_orden_con_nueve_valores_repetidos_y_deshacer(conn):
+    sid = db.open_session(conn)
+    db.replace_plan(conn, sid, "clean", [PlannedSet(84.0, None, 3)] * 9)
+    vistos = []
+    for _ in range(9):
+        item = db.get_next_plan_item(conn, sid, "clean")
+        vistos.append(item["id"])
+        db.consume_plan_item(conn, item["id"])
+    assert len(set(vistos)) == 9  # ids distintos aunque los valores se repitan
+    assert db.get_next_plan_item(conn, sid, "clean") is None
+    db.release_plan_item(conn, vistos[7])  # /deshacer libera exactamente ese ítem
+    assert db.get_next_plan_item(conn, sid, "clean")["id"] == vistos[7]
+
+
+def test_init_schema_rechaza_una_base_en_version_1(tmp_path):
+    connection = db.connect(tmp_path / "vieja.db")
+    connection.execute("PRAGMA user_version = 1")
+    connection.commit()
+    try:
+        with pytest.raises(RuntimeError, match="versión 1"):
+            db.init_schema(connection)
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 1  # intacta
+    finally:
+        connection.close()

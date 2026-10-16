@@ -82,7 +82,8 @@ revisión que resolvió las ambigüedades A-1 a A-5 del `plan.md`.*
     real de 5), la serie se guarda igual y sin aviso.
 - RF-05 Desviación con rangos: En el resumen de /fin, el par plan→real de una serie cuyo
   plan fue un rango se mostrará informativo.
-  - CA: el par será "<mín>-<máx>-><real>" (p. ej. "64-68->66"); no se evalúa si el real
+  - CA: el par será "<mín>-<máx>→<real>" (p. ej. "64-68→66", con la misma flecha "→" de
+    la 001); no se evalúa si el real
     cayó dentro del rango. Se construye desde los campos copiados en la serie
     (`planned_weight_kg` + `planned_max_kg`), no de `plan_items` (A-3); una serie sin
     plan copiado sigue mostrando su par actual o nada, como la 001.
@@ -149,8 +150,11 @@ revisión que resolvió las ambigüedades A-1 a A-5 del `plan.md`.*
 - CL-15 Guion largo: el en-dash "–" se acepta como equivalente al guion menos en
   rangos ("80–85x1" = "80-85x1"); la salida siempre usa el guion menos.
 - CL-16 Redondeo de rangos: cada extremo se convierte a kilos y se redondea a 0,5 kg por
-  separado (RM 100, plan "80,2-80,4x1" → ambos extremos 80 kg); si tras redondear
-  coinciden, la entrada se guarda y se muestra como un valor único sin rango.
+  separado (RM 100, plan "80,1-80,2x1" → ambos extremos 80 kg, colapsa); si tras
+  redondear coinciden, la entrada se guarda y se muestra como un valor único sin rango.
+  Un empate exacto (p. ej. 40,25 kg, a medio camino entre 40 y 40,5) redondea hacia
+  arriba, igual que en la 001 (RF-05): por eso "80-80,5%" sobre RM 50 da 40 y 40,5 y no
+  colapsa.
 - CL-17 Varias entradas inválidas ("130 65x0 85-80"): se avisa solo el **primer** error de
   izquierda a derecha, con su motivo y ejemplo; no se guarda nada. **(A-4)**
 - CL-18 Reps en mayúscula: "65X3" se acepta igual que "65x3" (y "80-85X1" = "80-85x1").

@@ -1,10 +1,11 @@
 """Acceso a SQLite: esquema y consultas. Sin lógica de negocio ni texto de respuesta."""
 
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 # Orden de creación: sessions y plan_items antes de series (FKs).
+# Esquema v2 (RF-06): plan con reps y rango, y el plan copiado a la serie (A-3).
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS profile (
     id INTEGER PRIMARY KEY,
@@ -29,6 +30,8 @@ CREATE TABLE IF NOT EXISTS plan_items (
     exercise TEXT NOT NULL,
     position INTEGER NOT NULL,
     weight_kg REAL NOT NULL,
+    reps INTEGER,
+    range_max_kg REAL,
     consumed INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS series (
@@ -38,10 +41,18 @@ CREATE TABLE IF NOT EXISTS series (
     real_weight_kg REAL NOT NULL,
     reps INTEGER NOT NULL,
     planned_weight_kg REAL,
+    planned_reps INTEGER,
+    planned_max_kg REAL,
     plan_item_id INTEGER REFERENCES plan_items(id) ON DELETE SET NULL,
     created_at TEXT NOT NULL
 );
 """
+
+# Protección temporal: una base v1 (como la real) no se toca hasta la migración (T6).
+_V1_ERROR = (
+    "La base está en la versión 1: la migración a la versión 2 aún no está "
+    "implementada (T6). No se abre para no dañarla."
+)
 
 
 def connect(path) -> sqlite3.Connection:
@@ -58,15 +69,29 @@ def connect(path) -> sqlite3.Connection:
 
 
 def init_schema(connection: sqlite3.Connection) -> None:
-    """Crea las tablas si no existen. Repetirlo no borra datos ni cambia la versión (RNF-3)."""
+    """Crea las tablas si no existen, en el esquema v2 (RF-06).
+
+    Repetirlo no borra datos ni cambia la versión (RNF-3). Una base nueva nace
+    en v2 (CL-11); una base en la versión 1 se rechaza con un error claro hasta
+    que T6 implemente la migración, para no dañarla.
+    """
+    version = connection.execute("PRAGMA user_version").fetchone()[0]
+    if version == 1:
+        raise RuntimeError(_V1_ERROR)
     connection.executescript(_SCHEMA)
-    if connection.execute("PRAGMA user_version").fetchone()[0] == 0:
-        connection.execute("PRAGMA user_version = 1")
+    if version == 0:
+        connection.execute("PRAGMA user_version = 2")
     connection.commit()
 
 
 def _now() -> str:
-    return datetime.now().isoformat(timespec="seconds")
+    """Marca actual en UTC, en el mismo formato ISO que la 001, sin huso (RF-02).
+
+    Convención de la 002: una marca sin huso en la base se interpreta como UTC
+    (la convierte core._as_utc); el desfijo "+00:00" se omite para no cambiar el
+    formato de texto que muestran los comandos hasta T5.
+    """
+    return datetime.now(timezone.utc).replace(tzinfo=None).isoformat(timespec="seconds")
 
 
 # --- perfil (RF-01) ---
@@ -163,22 +188,34 @@ def close_session(connection: sqlite3.Connection, session_id: int) -> None:
 
 
 def replace_plan(
-    connection: sqlite3.Connection, session_id: int, exercise: str, weights: list[float]
+    connection: sqlite3.Connection, session_id: int, exercise: str, entries
 ) -> None:
     """Reemplaza el plan de un ejercicio de una sesión y reinicia el orden.
 
     El DELETE filtra siempre por sesión y ejercicio: no toca otros ejercicios
-    ni otras sesiones (RF-05, CL-10).
+    ni otras sesiones (RF-05, CL-10). Cada entrada puede ser un número (solo
+    peso, como en la 001) o un PlannedSet con weight_kg, range_max_kg y reps
+    (RF-03).
     """
     connection.execute(
         "DELETE FROM plan_items WHERE session_id = ? AND exercise = ?",
         (session_id, exercise),
     )
-    for position, weight in enumerate(weights, start=1):
+    for position, entry in enumerate(entries, start=1):
+        weight = getattr(entry, "weight_kg", None)
+        if weight is None:
+            weight = float(entry)
         connection.execute(
-            "INSERT INTO plan_items (session_id, exercise, position, weight_kg, consumed)"
-            " VALUES (?, ?, ?, ?, 0)",
-            (session_id, exercise, position, weight),
+            "INSERT INTO plan_items (session_id, exercise, position, weight_kg,"
+            " reps, range_max_kg, consumed) VALUES (?, ?, ?, ?, ?, ?, 0)",
+            (
+                session_id,
+                exercise,
+                position,
+                weight,
+                getattr(entry, "reps", None),
+                getattr(entry, "range_max_kg", None),
+            ),
         )
     connection.commit()
 
@@ -188,7 +225,7 @@ def get_next_plan_item(
 ) -> dict | None:
     """Primer plan_item sin consumir de ese ejercicio en la sesión, o None."""
     row = connection.execute(
-        "SELECT id, position, weight_kg FROM plan_items"
+        "SELECT id, position, weight_kg, reps, range_max_kg FROM plan_items"
         " WHERE session_id = ? AND exercise = ? AND consumed = 0"
         " ORDER BY position, id LIMIT 1",
         (session_id, exercise),
@@ -223,18 +260,27 @@ def insert_series(
     reps: int,
     planned_weight_kg: float | None,
     plan_item_id: int | None,
+    planned_max_kg: float | None = None,
+    planned_reps: int | None = None,
 ) -> int:
-    """Guarda una serie y devuelve su id."""
+    """Guarda una serie y devuelve su id.
+
+    El plan se copia a la propia serie (RF-04, A-3): planned_reps y
+    planned_max_kg quedan NULL cuando no había plan o no tenía reps/rango.
+    created_at es la hora de la serie, en UTC (RF-01, A-2).
+    """
     cursor = connection.execute(
         "INSERT INTO series (session_id, exercise, real_weight_kg, reps,"
-        " planned_weight_kg, plan_item_id, created_at)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?)",
+        " planned_weight_kg, planned_reps, planned_max_kg, plan_item_id, created_at)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             session_id,
             exercise,
             real_weight_kg,
             reps,
             planned_weight_kg,
+            planned_reps,
+            planned_max_kg,
             plan_item_id,
             _now(),
         ),
@@ -244,9 +290,10 @@ def insert_series(
 
 
 def list_series(connection: sqlite3.Connection, session_id: int) -> list[dict]:
-    """Series de una sesión en orden de registro (por id)."""
+    """Series de una sesión en orden de registro (por id), con su plan copiado."""
     rows = connection.execute(
-        "SELECT id, exercise, real_weight_kg, reps, planned_weight_kg, plan_item_id"
+        "SELECT id, exercise, real_weight_kg, reps, planned_weight_kg,"
+        " planned_reps, planned_max_kg, plan_item_id"
         " FROM series WHERE session_id = ? ORDER BY id",
         (session_id,),
     ).fetchall()
@@ -266,7 +313,8 @@ def count_series(
 def get_last_series(connection: sqlite3.Connection, session_id: int) -> dict | None:
     """Última serie de la sesión (la de id máximo), o None si no hay."""
     row = connection.execute(
-        "SELECT id, exercise, real_weight_kg, reps, planned_weight_kg, plan_item_id"
+        "SELECT id, exercise, real_weight_kg, reps, planned_weight_kg,"
+        " planned_reps, planned_max_kg, plan_item_id"
         " FROM series WHERE session_id = ? ORDER BY id DESC LIMIT 1",
         (session_id,),
     ).fetchone()

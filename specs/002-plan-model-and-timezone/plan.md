@@ -9,7 +9,7 @@ sobre las ambigüedades listadas en §7 (todas quedan resueltas).*
 
 | Archivo | Funciones nuevas o modificadas | Por qué | RF |
 |---|---|---|---|
-| `boxlog/core.py` | **Nuevo:** `LOCAL_UTC_OFFSET` (constante -3 h, comentada), `parse_plan_entries(tokens)` (parser puro de /hoy), `convert_plan_entries(rm, entries)` (kg por extremo + colapso), `format_plan_suffix(...)` (sufijo de plan en la confirmación de /log, con ×), `format_hoy_lines(entries, sets)` (respuesta de /hoy, con ×), helpers `utc_now()`/`to_local(dt)`/`is_today(...)`. **Modificadas:** `format_start_time` (marca UTC → hora local antes de comparar el día), `build_summary` (par con rango "64-68->66", leído de la serie). | Toda la lógica nueva es pura y testeable sin red ni base (constitución 3). **(A-1)** | RF-02, RF-03, RF-04, RF-05 |
+| `boxlog/core.py` | **Nuevo:** `LOCAL_UTC_OFFSET` (constante -3 h, comentada), `parse_plan_entries(tokens)` (parser puro de /hoy), `convert_plan_entries(rm, entries)` (kg por extremo + colapso), `format_plan_suffix(...)` (sufijo de plan en la confirmación de /log, con ×), `format_hoy_lines(entries, sets)` (respuesta de /hoy, con ×), helpers `utc_now()`/`to_local(dt)`/`is_today(...)`. **Modificadas:** `format_start_time` (marca UTC → hora local antes de comparar el día), `build_summary` (par con rango "64-68→66", leído de la serie). | Toda la lógica nueva es pura y testeable sin red ni base (constitución 3). **(A-1)** | RF-02, RF-03, RF-04, RF-05 |
 | `boxlog/db.py` | **Nuevo:** `_migrate_v1_to_v2(connection, path)` (respaldo + ALTER + conversión de horas), `_backup_v1(connection, path)`. **Modificadas:** `_SCHEMA` (columnas v2 en el CREATE), `init_schema` (detecta versión y migra), `_now()` (hora **UTC** en vez de local; escribe `series.created_at`), `replace_plan` (recibe entradas con reps y rango), `get_next_plan_item` (devuelve también `reps` y `range_max_kg`), `insert_series` (**copia el plan a la serie**: `planned_reps` y `planned_max_kg`, además de `planned_weight_kg`), `list_series`/`get_last_series` (devuelven también `planned_reps` y `planned_max_kg` de la propia serie). | Esquema y persistencia; sin texto de respuesta (constitución 3). **(A-2, A-3)** | RF-01, RF-02, RF-04, RF-05, RF-06 |
 | `boxlog/commands.py` | **Modificadas:** `cmd_hoy` (nuevo parser de entradas y respuesta por línea con ×), `cmd_log` (usa `format_plan_suffix` y pasa el plan completo a `insert_series`), `cmd_inicio` (marca UTC → local para mostrar) y `cmd_fin` (duración con fechas aware; los pares salen de los campos de la serie). | Orquestación: valida con core, persiste con db, devuelve texto. Sin imports de Telegram. | RF-02, RF-03, RF-04, RF-05 |
 | `boxlog/bot.py` | **Sin cambios previstos.** Las firmas de los comandos son idénticas; el despacho, el dueño y el manejo de errores no deciden horas ni plan. | Separación de capas: nada nuevo en la interfaz (constitución 3). | — |
@@ -152,7 +152,7 @@ La salida usa siempre el guion menos (CL-15), incluso si la entrada vino con en-
   `convert_plan_entries` con redondeo por extremo y colapso (CL-16, ej. RM 100 y
   "80,2-80,4x1" → 80 único); `format_plan_suffix` con sus cuatro variantes y
   `format_hoy_lines` con los tres formatos y × (A-1, CL-19); `build_summary` con par
-  "64-68->66" leído de la serie; zona horaria — marca UTC
+  "64-68→66" leído de la serie; zona horaria — marca UTC
   "2026-10-14T01:00:00+00:00" con `now` local 14/10 23:00 → es "hoy" (CL-12), conversión
   -3 h y `format_start_time` sobre marcas UTC.
 - **`tests/test_db.py` (nuevos):** base fresca → columnas v2 presentes y
