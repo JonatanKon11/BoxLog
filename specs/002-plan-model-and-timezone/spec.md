@@ -12,13 +12,17 @@ Solo modelo de datos y su lógica asociada: sintaxis del plan en /hoy, consumo y
 confirmación del plan con repeticiones/rangos, desviación en /fin, zona horaria de las
 marcas y migración de la base de 1 a 2. No se añade ningún comando nuevo.
 
+*Notación: **(A-1)** … **(A-5)** marca, dentro de los requisitos, los cambios de la
+revisión que resolvió las ambigüedades A-1 a A-5 del `plan.md`.*
+
 ## Requisitos funcionales
 - RF-01 Marca de serie: Cuando el sistema registra una serie (/log), deberá guardar junto
-  a ella la marca de tiempo en que se registró, en UTC.
-  - CA: el nuevo campo es `series.logged_at`; se rellena en cada /log con la hora UTC del
-    momento, en el mismo formato ISO que el resto de marcas.
-  - CA: las series existentes (creadas antes de esta versión) quedarán con `logged_at`
-    vacío; no se inventa ningún dato para ellas.
+  a ella la marca de tiempo en que se registró, en UTC. **(A-2)**
+  - CA: la marca usa el campo existente `series.created_at` (no se crea `logged_at` ni
+    ninguna columna nueva para esto); desde la migración se rellena en UTC con el mismo
+    formato ISO que el resto de marcas.
+  - CA: las series existentes conservan su hora: la migración la convierte a UTC sumando
+    3 horas como cualquier otra marca (RF-06); no se borra ni se inventa ningún dato.
 - RF-02 Zona horaria: El sistema deberá guardar todas las marcas de tiempo en UTC y
   mostrarlas en hora local (UTC-3, Argentina, sin horario de verano).
   - CA: la conversión se hará con un desfase fijo de -3 horas, definido como constante
@@ -29,8 +33,8 @@ marcas y migración de la base de 1 a 2. No se añade ningún comando nuevo.
     local, no en UTC: una sesión que empieza a las 22:00 hora local (01:00 UTC del día
     siguiente) se mostrará como de hoy (CL-12).
   - CA: las marcas existentes (sessions.started_at, sessions.ended_at, created_at de
-    profile y rm_history) se convierten a UTC en la migración sumando 3 horas a la hora
-    local almacenada.
+    profile, rm_history y series) se convierten a UTC en la migración sumando 3 horas a
+    la hora local almacenada. **(A-2)**
 - RF-03 Plan con repeticiones y rangos: Cuando el usuario envía /hoy, el sistema deberá
   aceptar entradas de plan con el mismo orden que /log (valor x repeticiones):
   "65x3" (65% por 3 reps), "70" (70% sin reps), "80-85x1" (rango de 80 a 85% por 1 rep) y
@@ -53,34 +57,52 @@ marcas y migración de la base de 1 a 2. No se añade ningún comando nuevo.
     mostrará como un valor único, sin rango (CL-16).
   - CA: fuera de esas reglas se aplica RF-09 con un aviso que indica el motivo y el
     ejemplo (p. ej. "El porcentaje tiene que estar entre 1 y 120. Usa /hoy clean 70 80 85").
+  - CA: las entradas se procesan de izquierda a derecha y solo se avisa el **primer**
+    error encontrado (con su motivo y ejemplo); no se lista ningún otro. **(A-4)**
+  - CA: la separadora de repeticiones admite mayúscula o minúscula, como en /log:
+    "65X3" = "65x3". **(A-5)**
+  - CA: la respuesta tendrá una línea por entrada, con el mismo signo × que las
+    confirmaciones de /log: sin reps "70% → 84 kg" (sin cambios de la 001), con reps
+    "65% × 3 → 52 kg", con rango "80-85% × 1 → 64-68 kg" (o "80-85% → 64-68 kg" sin
+    reps). **(A-1)**
   - CA: el resto de /hoy no cambia: sin sesión aviso de RF-04, sin RM aviso "No tengo RM…",
     repetir /hoy reemplaza el plan y reinicia el orden (RF-05 de la spec 001).
 - RF-04 Confirmación de /log con plan: Cuando una serie toma su plan del /hoy vigente, la
   confirmación de /log mostrará el plan con sus repeticiones cuando las tenga.
-  - CA: sin reps el formato sigue siendo "(plan 84)"; con reps será "(plan 66 kg x 1)"; con
-    rango, "(plan 64-68 kg x 1)" (o "(plan 64-68)" si no hay reps); si el rango se colapsó
-    a un único valor (RF-03), se mostrará como plan simple (p. ej. "(plan 80 kg x 1)").
+  - CA: sin reps el formato sigue siendo "(plan 84)"; con reps será "(plan 66 kg × 1)"; con
+    rango, "(plan 64-68 kg × 1)" (o "(plan 64-68)" si no hay reps); si el rango se colapsó
+    a un único valor (RF-03), se mostrará como plan simple (p. ej. "(plan 80 kg × 1)").
+    **(A-1: se usa ×, unificando la "x" de la revisión inicial)**
+  - CA: al registrar la serie, el plan se **copia a la propia serie**: `planned_reps` y
+    `planned_max_kg` (vacíos si no había plan o si el plan no tenía reps/rango); /fin y el
+    futuro dashboard leen de la serie, sin depender de `plan_items`. Las series existentes
+    quedan con ambos campos vacíos. **(A-3)**
   - CA: el consumo del plan no cambia: una entrada del plan corresponde a un /log, en
     orden; aunque las repeticiones reales no coincidan con las del plan (plan de 3 reps,
     real de 5), la serie se guarda igual y sin aviso.
 - RF-05 Desviación con rangos: En el resumen de /fin, el par plan→real de una serie cuyo
   plan fue un rango se mostrará informativo.
   - CA: el par será "<mín>-<máx>-><real>" (p. ej. "64-68->66"); no se evalúa si el real
-    cayó dentro del rango.
+    cayó dentro del rango. Se construye desde los campos copiados en la serie
+    (`planned_weight_kg` + `planned_max_kg`), no de `plan_items` (A-3); una serie sin
+    plan copiado sigue mostrando su par actual o nada, como la 001.
   - CA: el resto del resumen (volumen con peso real, máximo, volumen total, duración) no
     cambia.
 - RF-06 Migración de la base: El sistema deberá migrar la base existente de la versión 1
   a la versión 2 conservando todos los datos.
   - CA: el esquema 2 añade a `plan_items` las columnas `reps` (entero, vacío si no aplica)
-    y `range_max_kg` (decimal, vacío si no aplica), y a `series` la columna `logged_at`
-    (texto, vacío para lo ya existente).
+    y `range_max_kg` (decimal, vacío si no aplica), y a `series` las columnas
+    `planned_reps` (entero) y `planned_max_kg` (decimal), ambas vacías para las series ya
+    existentes. No se crea ninguna columna de hora: la marca de serie ya existe
+    (`series.created_at`, RF-01). **(A-2, A-3)**
   - CA: la migración se ejecutará solo cuando `PRAGMA user_version` sea 1; será
     idempotente (repetirla no cambia nada) y ocurrirá dentro de una transacción.
   - CA: antes de migrar, el sistema creará una copia de seguridad automática de la base
     (mismo directorio, sufijo ".bak-v1"); la copia no se recrea si ya existe.
   - CA: la migración convierte a UTC todas las marcas existentes, sin excepción:
-    sessions.started_at y sessions.ended_at y también los created_at de profile y de
-    rm_history (RF-02); no se tocan datos fuera de esa conversión y de las columnas nuevas.
+    sessions.started_at y sessions.ended_at, los created_at de profile y de rm_history y
+    el created_at de series (RF-01, RF-02); no se tocan datos fuera de esa conversión y de
+    las columnas nuevas. **(A-2)**
 
 ## Requisitos no funcionales
 - RNF-1 Durabilidad: los entrenamientos, RM y perfil existentes no se pierden bajo ningún
@@ -89,7 +111,8 @@ marcas y migración de la base de 1 a 2. No se añade ningún comando nuevo.
   `requirements.txt` no cambia.
 - RNF-3 Claridad: todo aviso de RF-03 indica el motivo y qué enviar a continuación.
 - RNF-4 Idioma: mensajes en español con kilos y horas legibles, sin formato interno de la
-  base (los textos de confirmación son de la spec 001 más los matices de RF-04/RF-05).
+  base (los textos de confirmación son de la spec 001 con el signo × unificado en lo que
+  muestra el plan, RF-04).
 
 ## Casos límite
 - CL-1 /hoy con entrada mixta ("70 65x3 80-85x1 80-85"): todas las entradas se procesan
@@ -102,12 +125,15 @@ marcas y migración de la base de 1 a 2. No se añade ningún comando nuevo.
 - CL-5 Repetir /hoy en la misma sesión → el plan (con reps y rangos) se reemplaza y el
   orden se reinicia; las series ya guardadas conservan su planificado original.
 - CL-6 /log cuyo plan traía reps distintas a las reales (plan "65x3", /log squat snatch
-  65x5) → serie guardada igual, sin aviso; la confirmación muestra "(plan 65 kg x 3)".
+  65x5) → serie guardada igual, sin aviso; la confirmación muestra "(plan 65 kg × 3)" y
+  la serie guarda `planned_reps = 3` (A-1, A-3).
 - CL-7 /log sin plan o con plan agotado → sin cambios (spec 001, CL-3).
 - CL-8 /deshacer de una serie con plan de rango o con reps → se libera esa entrada del
   plan exactamente como con el plan simple.
-- CL-9 Series antiguas (anteriores a la migración): `logged_at` vacío y su planificado
-  intacto; /fin de una sesión vieja muestra los pares como hasta ahora.
+- CL-9 Series antiguas (anteriores a la migración): `created_at` convertido a UTC
+  conservando su hora real (+3 h), `planned_reps` y `planned_max_kg` vacíos y su
+  planificado intacto; /fin de una sesión vieja muestra los pares como hasta ahora.
+  **(A-2, A-3)**
 - CL-10 Migración repetida o sobre una base ya en la versión 2 → no hace nada, no recrea
   la copia de seguridad.
 - CL-11 Base nueva (carpeta sin datos): se crea directamente en la versión 2, sin copia
@@ -125,6 +151,13 @@ marcas y migración de la base de 1 a 2. No se añade ningún comando nuevo.
 - CL-16 Redondeo de rangos: cada extremo se convierte a kilos y se redondea a 0,5 kg por
   separado (RM 100, plan "80,2-80,4x1" → ambos extremos 80 kg); si tras redondear
   coinciden, la entrada se guarda y se muestra como un valor único sin rango.
+- CL-17 Varias entradas inválidas ("130 65x0 85-80"): se avisa solo el **primer** error de
+  izquierda a derecha, con su motivo y ejemplo; no se guarda nada. **(A-4)**
+- CL-18 Reps en mayúscula: "65X3" se acepta igual que "65x3" (y "80-85X1" = "80-85x1").
+  **(A-5)**
+- CL-19 Respuesta de /hoy con los tres formatos: "70% → 84 kg" (sin cambios de la 001),
+  "65% × 3 → 52 kg" (con reps) y "80-85% × 1 → 64-68 kg" (con rango), una línea por
+  entrada en el orden dado. **(A-1)**
 
 ## Fuera de alcance
 - Dashboard o cualquier lectura agregada de `data/boxlog.db` (v0.3).
@@ -136,11 +169,12 @@ marcas y migración de la base de 1 a 2. No se añade ningún comando nuevo.
 - WOD, calorías, audios y datos de Garmin (specs futuras).
 
 ## Preguntas abiertas
-- Ninguna. Tras la revisión quedaron resueltos y escritos en los RF/CL: el cambio de día
-  por UTC se decide en hora local (CL-12), el en-dash se acepta como guion menos (CL-15),
-  el redondeo de extremos puede colapsar el rango a valor único (CL-16) y la migración
-  cubre también los created_at de profile y rm_history (RF-06). No queda ninguna decisión
-  pendiente para escribir plan.md y tasks.md.
+- Ninguna. Las ambigüedades A-1 a A-5 del plan quedaron resueltas por el usuario y
+  reflejadas en los RF/CL marcados: respuesta de /hoy con × y sus tres formatos (A-1,
+  CL-19), `series.created_at` como marca de serie convertida a UTC sin columna nueva
+  (A-2, RF-01), plan copiado a la serie en `planned_reps`/`planned_max_kg` (A-3, RF-04),
+  primer error de izquierda a derecha (A-4, CL-17) y "65X3" en mayúscula (A-5, CL-18).
+  No queda ninguna decisión pendiente.
 
 ## Criterios de finalización
 - Tests primero: se escriben antes que el código; no se avanza con tests en rojo;

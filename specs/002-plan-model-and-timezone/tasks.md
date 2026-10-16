@@ -1,0 +1,48 @@
+# Tareas 002 — Modelo de plan y zona horaria (BoxLog v0.2)
+
+Ordenadas por dependencia y de menor a mayor riesgo (plan §6). Tests primero: cada tarea de código empieza por escribir sus tests y no se avanza con `python -m pytest` en rojo (spec, criterios de finalización). **PÁRATE al terminar cada tarea**: espera a la siguiente petición del usuario antes de continuar.
+
+- [ ] **T1. core: zona horaria pura** — RF-02, CL-12, A-2
+  - Tests primero: `to_local` resta 3 h a una marca UTC, marca UTC "2026-10-14T01:00:00+00:00" con `now` local 14/10 23:00 se considera "hoy" (cambio de día en local, CL-12), `format_start_time` sobre marcas UTC devuelve los mismos textos legibles de la 001 ("las 20:35", "el 12/10 a las 22:00", "Hoy").
+  - Implementar `LOCAL_UTC_OFFSET` (timedelta -3 h, con comentario Argentina/UTC-3/sin DST y sin zoneinfo), `utc_now`, `to_local`, `is_today` y adaptar `format_start_time` (interpreta la marca como UTC y compara el día en local).
+  - Hecho cuando: `python -m pytest tests/test_core.py` en verde y `core` sigue sin importar Telegram ni sqlite3.
+  - PÁRATE al terminar.
+
+- [ ] **T2. core: parser de entradas de /hoy** — RF-03 (parser y avisos), CL-13, CL-14, CL-15 (entrada), CL-17 (A-4), CL-18 (A-5)
+  - Tests primero: mixtas "1 70 85" / "1x3 70x5 85x3", espacios "65 x 3" → aviso de gramática (CL-13), signo menos "-5" / "80-" / "-80-85" → gramática (CL-14), en-dash "80–85x1" aceptado como "80-85x1" (CL-15), coma decimal "1x82,5", porcentaje 0 o 121 → aviso de rango 1–120, "85-80" invertido → aviso de mínimo<máximo, "65x0" → aviso de reps, "65X3" en mayúscula ≡ "65x3" (A-5), y "130 65x0 85-80" → un único aviso, el del primer error de izquierda a derecha (A-4); cada aviso con su motivo y ejemplo.
+  - Implementar `parse_plan_entries(tokens)` con la gramática y el orden de validaciones del plan §3 (primero-error).
+  - Hecho cuando: `python -m pytest tests/test_core.py` en verde.
+  - PÁRATE al terminar.
+
+- [ ] **T3. core: conversión de entradas y formatos** — RF-03 (conversión), RF-04 (confirmación), RF-05 (par de rango), CL-16, CL-19, A-1, A-3
+  - Tests primero: `convert_plan_entries` redondea cada extremo por separado a 0,5 kg y colapsa si coinciden (RM 100 con "80,2-80,4x1" → valor único 80); `format_plan_suffix` con las cuatro variantes y el signo × unificado ("(plan 84)", "(plan 66 kg × 1)", "(plan 64-68 kg × 1)", "(plan 64-68)"; CL-6); `format_hoy_lines` con los tres formatos ("70% → 84 kg" sin cambios, "65% × 3 → 52 kg", "80-85% × 1 → 64-68 kg"), una línea por entrada en orden y guion menos en la salida aunque la entrada tuviera en-dash (A-1, CL-19); `build_summary` con par de rango "64-68->66" a partir de los campos de la serie (A-3).
+  - Implementar `convert_plan_entries`, `format_plan_suffix`, `format_hoy_lines` y ajustar `build_summary`.
+  - Hecho cuando: `python -m pytest tests/test_core.py` en verde.
+  - PÁRATE al terminar.
+
+- [ ] **T4. db: esquema v2 en base fresca y escrituras en UTC** — RF-01, RF-04 (copia del plan), RF-06 (columnas), RNF-3, A-2, A-3
+  - Tests primero: base nueva → columnas `plan_items.reps`, `plan_items.range_max_kg`, `series.planned_reps`, `series.planned_max_kg` presentes y `user_version = 2` sin respaldo (CL-11); `_now()` devuelve UTC; `replace_plan` con entradas de reps/rango; `get_next_plan_item` devuelve `reps` y `range_max_kg`; `insert_series` copia el plan a la serie (`planned_reps`/`planned_max_kg` rellenados con el plan o NULL si no había plan o no tenía reps/rango) y marca la serie en UTC.
+  - Actualizar `_SCHEMA` a la v2, `_now()` a UTC y las funciones de plan/series citadas.
+  - Hecho cuando: `python -m pytest tests/test_db.py` en verde sobre BD temporal de `tmp_path`.
+  - PÁRATE al terminar.
+
+- [ ] **T5. commands: /hoy, /log, /inicio y /fin con plan nuevo y horas locales** — RF-02, RF-03, RF-04, RF-05, CL-12, CL-17, CL-18, CL-19
+  - Tests primero: `cmd_hoy` con las cuatro sintaxis y respuesta con ×, cada aviso (motivo + ejemplo) y primero-error (CL-17); `cmd_log` con plan de reps/rango → confirmación con × y serie con el plan copiado (A-3), reps reales distintas al plan sin aviso (CL-6); `cmd_fin` con par de rango leído de la serie y resumen igual que antes para lo simple; `cmd_inicio`/`cmd_fin` con marcas UTC cercanas a la medianoche → "Hoy" según CL-12 y duración correcta.
+  - Actualizar de la 001 los tests tocados por las enmiendas: horas (`format_start_time` con marcas UTC), respuesta de /hoy (solo lo que cambie por formato/×; los porcentajes simples no cambian), confirmación de /log si espera "x" → ×, y cualquier aserción de `user_version = 1`.
+  - Implementar el cableado en `commands.py` (valida con core, persiste con db, devuelve texto; sin imports de Telegram).
+  - Hecho cuando: `python -m pytest tests/test_commands.py` y `tests/test_core.py` en verde; `bot.py` sin cambios.
+  - PÁRATE al terminar.
+
+- [ ] **T6. db: migración 1→2 con respaldo y transacción** — RF-02 (conversión), RF-06, RNF-1, CL-9, CL-10, CL-11
+  - Tests primero (los de mayor riesgo, escritos con la T4 en verde): migración desde una **base v1 sintética** (DDL de la 001 + perfil, RM, dos sesiones, plan con `consumed` y series con horas locales) → existe `<path>.bak-v1`, `user_version = 2`, las cuatro columnas nuevas, **todas** las horas +3 h incluido `series.created_at` (A-2) y todos los datos intactos (RNF-1); series v1 con `planned_reps`/`planned_max_kg` NULL (CL-9); segunda ejecución → no-op y respaldo sin recrear (CL-10); **fallo simulado** (`CREATE TRIGGER ... RAISE(ABORT)` que rompa un UPDATE) → `ROLLBACK` total: versión sigue en 1, sin columnas parciales ni horas a medias; `:memory:` sin respaldo.
+  - Implementar `init_schema` con las cuatro ramas por `user_version` (0 → v2 directa, 2 → no-op, 1 → migrar) y `_migrate_v1_to_v2`/`_backup_v1`: respaldo con `connection.backup` antes de la transacción y solo si no existe; `BEGIN IMMEDIATE` a mano (nunca `executescript`); cuatro `ALTER TABLE ADD COLUMN`; conversión de horas en Python con `fromisoformat + 3h`; `user_version = 2` y COMMIT; `except → ROLLBACK → re-lanzar`.
+  - Hecho cuando: `python -m pytest tests/test_db.py` en verde incluyendo los tres escenarios (éxito, idempotencia, fallo).
+  - PÁRATE al terminar.
+
+- [ ] **T7. Cierre: ensayo de migración sobre copia real, e2e, README y MEMORY** — RF-01 a RF-06, CL-1 a CL-19, RNF-1 (cierre de la spec)
+  - **Importante: el bot debe estar APAGADO** al migrar cualquier base real (una sesión abierta durante la migración escribiría marcas sobre una base en transición). La migración real se ejecuta en el siguiente arranque del bot; el ensayo de esta tarea se hace **solo sobre una copia**.
+  - Ensayo: copiar `data/boxlog.db` a `data/boxlog.ensayo.db` (nunca migrar la original en esta tarea), abrir la copia, registrar `PRAGMA user_version`, conteos de filas por tabla y un puñado de horas concretas antes de migrar; ejecutar `init_schema`; comparar: mismo `user_version = 2`, mismos conteos, cada hora +3 h exactamente, columnas nuevas presentes y `<path>.bak-v1` creado. Concluir el ensayo indicando el resultado al usuario (la migración de la original quedará para el arranque real, con el bot apagado).
+  - Tests primero: ampliar `tests/test_e2e.py` con una pasada del ciclo que use "80-85x1": `/hoy` con rango, confirmación de `/log` con "(plan 64-68 kg × 1)" y resumen de `/fin` con el par "64-68->66"; el ciclo completo de la 001 debe seguir en verde sin cambios de texto.
+  - Actualizar `README.md` (sintaxis del plan con reps y rangos, formato de respuesta con ×, nota de la zona horaria y de la migración automática con respaldo) y `MEMORY.md` (estado, decisiones A-1 a A-5, aprendizajes, próxima spec).
+  - Hecho cuando: `python -m pytest` completa en verde, todos los RF y CL de la spec tienen su test, el ensayo sobre la copia quedó documentado y el diff no contiene token ni datos personales.
+  - PÁRATE al terminar.
