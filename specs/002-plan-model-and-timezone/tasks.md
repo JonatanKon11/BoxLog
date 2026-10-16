@@ -9,10 +9,12 @@ Ordenadas por dependencia y de menor a mayor riesgo (plan §6). Tests primero: c
   - Hecho cuando: `python -m pytest tests/test_core.py` en verde y `core` sigue sin importar Telegram ni sqlite3. ✔ 252 tests en verde, sin cambiar ningún test de la 001.
   - PÁRATE al terminar.
 
-- [ ] **T2. core: parser de entradas de /hoy** — RF-03 (parser y avisos), CL-13, CL-14, CL-15 (entrada), CL-17 (A-4), CL-18 (A-5)
+- [x] **T2. core: parser de entradas de /hoy** — RF-03 (parser y avisos), CL-13, CL-14, CL-15 (entrada), CL-17 (A-4), CL-18 (A-5)
+  - Ajuste: `split_exercise_and_numbers` con su `is_number` por defecto no reconoce "65x3" como valor (en la 001 eso es sintaxis de /log); en T5 `cmd_hoy` le pasará un `is_number` que acepte los tokens del plan, reutilizando la función sin duplicar su lógica. El parser de T2 recibe los tokens ya separados.
   - Tests primero: mixtas "1 70 85" / "1x3 70x5 85x3", espacios "65 x 3" → aviso de gramática (CL-13), signo menos "-5" / "80-" / "-80-85" → gramática (CL-14), en-dash "80–85x1" aceptado como "80-85x1" (CL-15), coma decimal "1x82,5", porcentaje 0 o 121 → aviso de rango 1–120, "85-80" invertido → aviso de mínimo<máximo, "65x0" → aviso de reps, "65X3" en mayúscula ≡ "65x3" (A-5), y "130 65x0 85-80" → un único aviso, el del primer error de izquierda a derecha (A-4); cada aviso con su motivo y ejemplo.
   - Implementar `parse_plan_entries(tokens)` con la gramática y el orden de validaciones del plan §3 (primero-error).
-  - Hecho cuando: `python -m pytest tests/test_core.py` en verde.
+  - Hecho cuando: `python -m pytest tests/test_core.py` en verde. ✔ 283 tests en verde, sin cambiar ningún test de la 001.
+  - Ajuste 2 (mensajes de gramática): el aviso genérico "Entrada de plan no válida" pasa a `_plan_grammar_error(token)`, que incluye el valor ofensivo entre comillas y el motivo deducible: "x" suelto/empezado/terminado en x → "'x' va pegada, sin espacios: 65x3"; empieza con "-" → "'-5' no es válido: no se aceptan negativos. Usa /hoy clean 70 80 85"; rango incompleto → "'80-' es un rango incompleto: 80-85"; resto → "'abs' no se entiende. Usa /hoy clean 70 80 85". Todos terminan con un ejemplo; sigue avisando solo del primer error. Tests actualizados y nuevos en T2; ✔ 290 en verde.
   - PÁRATE al terminar.
 
 - [ ] **T3. core: conversión de entradas y formatos** — RF-03 (conversión), RF-04 (confirmación), RF-05 (par de rango), CL-16, CL-19, A-1, A-3

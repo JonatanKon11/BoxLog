@@ -8,6 +8,7 @@ from pathlib import Path
 import boxlog.core as core_module
 from boxlog.core import (
     LOCAL_UTC_OFFSET,
+    PlanEntry,
     build_summary,
     convert_percentages,
     format_duration,
@@ -19,6 +20,7 @@ from boxlog.core import (
     normalize_exercise,
     parse_log_args,
     parse_number,
+    parse_plan_entries,
     round_half_kg,
     split_exercise_and_numbers,
     to_local,
@@ -363,6 +365,134 @@ def test_is_today_distinto_dia_local():
 def test_is_today_acepta_marcas_naive_como_utc():
     # Todas las marcas de la base son UTC: una marca sin huso se interpreta como UTC (RF-02).
     assert is_today(datetime(2026, 10, 14, 1, 0), datetime(2026, 10, 13, 23, 0)) is True
+
+
+# --- parse_plan_entries (RF-03, CL-13, CL-14, CL-15, CL-17, CL-18) ---
+
+
+@pytest.mark.parametrize(
+    "tokens,esperado",
+    [
+        (["70"], [(70.0, None, None)]),
+        (["65x3"], [(65.0, None, 3)]),
+        (["65X3"], [(65.0, None, 3)]),  # separadora en mayúscula (CL-18)
+        (["80-85"], [(80.0, 85.0, None)]),
+        (["80-85x1"], [(80.0, 85.0, 1)]),
+        (["80–85x1"], [(80.0, 85.0, 1)]),  # en-dash aceptado como guion menos (CL-15)
+        (["82,5"], [(82.5, None, None)]),
+        (["82.5x3"], [(82.5, None, 3)]),
+        (["1x3", "70x5", "85x3"], [(1.0, None, 3), (70.0, None, 5), (85.0, None, 3)]),
+        (["80-85x2", "70", "90x1"], [(80.0, 85.0, 2), (70.0, None, None), (90.0, None, 1)]),
+    ],
+)
+def test_parse_plan_entries_validas(tokens, esperado):
+    entradas = parse_plan_entries(tokens)
+    assert not isinstance(entradas, str)
+    assert [(e.pct_low, e.pct_high, e.reps) for e in entradas] == esperado
+
+
+def test_parse_plan_entries_reps_son_int():
+    entradas = parse_plan_entries(["65x3"])
+    assert not isinstance(entradas, str)
+    assert isinstance(entradas[0].reps, int)
+
+
+def test_parse_plan_entries_lista_larga_nueve_porcentajes():
+    # La lista "70 80 85" repetida debe seguir dando nueve entradas simples, en orden (CL-1).
+    tokens = "70 80 85 70 80 85 70 80 85".split()
+    entradas = parse_plan_entries(tokens)
+    assert not isinstance(entradas, str)
+    assert [e.pct_low for e in entradas] == [70, 80, 85, 70, 80, 85, 70, 80, 85]
+    assert all(e.pct_high is None and e.reps is None for e in entradas)
+
+
+@pytest.mark.parametrize(
+    "tokens,motivo,ofensor",
+    [
+        (["65", "x", "3"], "va pegada", "x"),  # CL-13: "65 x 3" llega como tokens sueltos
+        (["x"], "va pegada", "x"),
+        (["x3"], "va pegada", "x3"),  # empieza en x
+        (["65x"], "va pegada", "65x"),  # termina en x
+        (["-5"], "no se aceptan negativos", "-5"),  # CL-14
+        (["-80-85"], "no se aceptan negativos", "-80-85"),
+        (["80-"], "rango incompleto", "80-"),
+        (["65x2,5"], "no se entiende", "65x2,5"),  # reps no enteras por gramática
+        (["abs"], "no se entiende", "abs"),  # texto no numérico
+        (["nan"], "no se entiende", "nan"),
+        (["inf"], "no se entiende", "inf"),
+        (["1e3"], "no se entiende", "1e3"),  # notación científica
+        (["0"], "entre 1 y 120", None),
+        (["121"], "entre 1 y 120", None),
+        (["85-80"], "menor que el máximo", None),
+        (["80-80"], "menor que el máximo", None),  # extremos iguales también son error
+        (["65x0"], "entero", None),
+    ],
+)
+def test_parse_plan_entries_error_con_motivo_y_ejemplo(tokens, motivo, ofensor):
+    aviso = parse_plan_entries(tokens)
+    assert isinstance(aviso, str)
+    assert motivo in aviso
+    if ofensor is not None:
+        assert f"'{ofensor}'" in aviso  # el valor ofensivo, entre comillas
+    # RF-09: siempre termina con un ejemplo (embebido: 65x3 / 80-85, o el aviso de uso)
+    assert aviso.endswith(("65x3", "80-85")) or aviso.endswith(usage_example("hoy"))
+
+
+@pytest.mark.parametrize(
+    "tokens,esperado",
+    [
+        (["x"], "'x' va pegada, sin espacios: 65x3"),
+        (["-5"], "'-5' no es válido: no se aceptan negativos. Usa /hoy clean 70 80 85"),
+        (["80-"], "'80-' es un rango incompleto: 80-85"),
+        (["abs"], "'abs' no se entiende. Usa /hoy clean 70 80 85"),
+    ],
+)
+def test_parse_plan_entries_mensajes_de_gramatica_texto_exacto(tokens, esperado):
+    assert parse_plan_entries(tokens) == esperado
+
+
+def test_parse_plan_entries_solo_el_primer_error_izquierda_a_derecha():
+    # "130" (rango), "65x0" (reps) y "85-80" (invertido): solo se informa el primero (CL-17).
+    aviso = parse_plan_entries(["130", "65x0", "85-80"])
+    assert isinstance(aviso, str)
+    assert "entre 1 y 120" in aviso
+    assert "entero" not in aviso
+    assert "menor que" not in aviso
+
+
+def test_parse_plan_entries_orden_de_reglas_en_un_valor():
+    # Gramática → porcentajes → mínimo<máximo → reps: "0x0" avisa del %, "85-80x0" del rango.
+    assert "entre 1 y 120" in parse_plan_entries(["0x0"])
+    assert "menor que" in parse_plan_entries(["85-80x0"])
+
+
+def test_parse_plan_entries_sin_valores_devuelve_aviso_de_uso():
+    assert parse_plan_entries([]) == usage_example("hoy")
+
+
+def test_parse_plan_entries_reutiliza_split_exercise_and_numbers():
+    # /hoy separa el nombre hasta el primer valor del plan (en T5 el splitter reconoce
+    # también "65x3"); aquí los tokens llegan como los da split_exercise_and_numbers.
+    split = split_exercise_and_numbers(["front squat", "70", "80-85x1"])
+    assert split is not None
+    ejercicio, tokens = split
+    entradas = parse_plan_entries(tokens)
+    assert ejercicio == "front squat"
+    assert not isinstance(entradas, str)
+    assert [(e.pct_low, e.pct_high, e.reps) for e in entradas] == [
+        (70.0, None, None),
+        (80.0, 85.0, 1),
+    ]
+
+
+def test_parse_plan_entries_espacios_como_en_log():
+    # "/hoy clean 65 x 3": split deja los tokens sueltos y el "x" solo cae en la gramática (CL-13).
+    split = split_exercise_and_numbers(["clean", "65", "x", "3"])
+    assert split is not None
+    _, tokens = split
+    aviso = parse_plan_entries(tokens)
+    assert isinstance(aviso, str)
+    assert "'x' va pegada, sin espacios: 65x3" == aviso
 
 
 # --- format_start_time (RF-03) ---

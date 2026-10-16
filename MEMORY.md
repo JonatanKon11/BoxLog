@@ -1,7 +1,7 @@
 # MEMORY.md — BoxLog
 
 ## Estado actual
-- Fase: 002-plan-model-and-timezone activa en la rama **spec-002** (sin commits: los hace el usuario). Tarea T1 hecha de T1–T7 (`specs/002-plan-model-and-timezone/`); 252 tests en verde. Spec 001 cerrada (T1–T12); hay `.env` real local (ignorado por git) y los tests de config lo parchean con la fixture `sin_dotenv`.
+- Fase: 002-plan-model-and-timezone activa en la rama **spec-002** (sin commits: los hace el usuario). Tareas T1–T2 hechas de T1–T7 (con el Ajuste 2 de T2: mensajes de gramática específicos con el valor ofensivo); 290 tests en verde. Spec 001 cerrada (T1–T12); hay `.env` real local (ignorado por git) y los tests de config lo parchean con la fixture `sin_dotenv`.
 - v0.2: modelo de plan (reps y rangos de porcentaje), todas las marcas en UTC (hora local UTC-3 fija, sin zoneinfo) y migración 1→2 con respaldo. Decisiones A-1 a A-5 ya resueltas en spec.md/plan.md de la 002.
 - Nombre provisional: BoxLog. Destino: GitHub como portfolio.
 - Uso inicial: solo yo; si funciona, se comparte.
@@ -33,7 +33,9 @@
 - `load_dotenv()` de python-dotenv busca subiendo desde la ubicación del módulo que lo llama (aquí `boxlog/bot.py`), no desde el directorio de trabajo: en tests hay que parchear `bot.load_dotenv`, un `chdir` no aísla.
 - Sin `add_error_handler`, python-telegram-bot imprime el traceback completo ("No error handlers are registered") por cada reintento de red: registrar uno y decidir el texto con `bot.format_error_log(error, token)` (NetworkError/TimedOut → una línea; resto → completo; token redactado siempre).
 - T1 de la 002: no cambiar la semántica de una función que otra capa aún usa con el contrato viejo (`core.format_start_time` sigue recibiendo marcas locales hasta T5, cuando db escribe UTC y commands se cablea); si no, la suite se rompe sin motivo y hay que tocar tests de otra tarea. Respetar el orden de riesgo del plan §6 (helpers puros primero).
+- T2 de la 002: `split_exercise_and_numbers` con su `is_number` por defecto solo reconoce números simples — "65x3" es sintaxis de /log y caería dentro del nombre del ejercicio; /hoy (T5) debe pasarle un `is_number` propio que acepte tokens del plan, sin duplicar la lógica de separación. El parser de entradas con gramática por regex hace caer solos CL-13 ("65 x 3" como tokens sueltos) y CL-14 (guion fuera de posición); primera-error-de-izquierda-a-derecha sale naturalmente con `return` dentro del bucle.
+- Ajuste 2 de T2: en errores de gramática, mostrar el valor ofensivo entre comillas y el motivo deducible (x pegada, negativo, rango incompleto, "no se entiende") en vez de un mensaje genérico; los tests que comparaban el substring "no válida" se actualizaron a los motivos específicos y se añadió un test de texto exacto por variante. Cuando un mensaje ya trae su ejemplo embebido ("65x3", "80-85"), no duplicar "Usa /hoy…".
 
 ## Próximos pasos
-1. Seguir la 002 en spec-002: T2 (parser de /hoy en core), T3 (conversión y formatos con ×), T4 (esquema v2 y UTC en db), T5 (commands + ajuste de format_start_time), T6 (migración), T7 (ensayo sobre copia + e2e + README + MEMORY y paso manual del usuario con el bot apagado).
+1. Seguir la 002 en spec-002: T3 (conversión de entradas a kilos y formatos con ×), T4 (esquema v2 y UTC en db), T5 (commands + ajuste de format_start_time + splitter de /hoy), T6 (migración), T7 (ensayo sobre copia + e2e + README + MEMORY y paso manual del usuario con el bot apagado).
 2. Commits de la 002 por el usuario al cerrarla; nunca subir `.env` ni `data/`.

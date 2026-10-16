@@ -3,6 +3,7 @@
 import math
 import re
 from datetime import datetime, timedelta, timezone
+from typing import NamedTuple
 
 # Argentina: UTC-3, sin horario de verano. Desfase fijo (RF-02, RNF-2): no se
 # usa zoneinfo porque exigiría la dependencia tzdata en Windows.
@@ -163,6 +164,73 @@ def validate_percentages(pcts: list[float]) -> str | None:
     if pcts and all(1 <= p <= 120 for p in pcts):
         return None
     return usage_example("hoy")
+
+
+# Valores del plan: <porcentaje>, <porcentaje>x<reps>, <mín>-<más> y <mín>-<más>x<reps>.
+# El guion solo puede ir dentro, entre dos números; las reps son solo dígitos (CL-13, CL-14).
+_PLAN_TOKEN_RE = re.compile(r"^(\d+(?:[.,]\d+)?)(?:-(\d+(?:[.,]\d+)?))?(?:x(\d+))?$")
+
+
+class PlanEntry(NamedTuple):
+    """Una entrada del plan de /hoy: porcentaje (o rango) y repeticiones opcionales (RF-03)."""
+
+    pct_low: float
+    pct_high: float | None
+    reps: int | None
+
+
+def _plan_grammar_error(token: str) -> str:
+    """Aviso de gramática inválida con el valor ofensivo y un motivo específico (RF-09).
+
+    Motivo deducible cuando se puede: "x" pegada mal, negativos y rangos incompletos;
+    si no, "no se entiende". Todos terminan con un ejemplo de uso.
+    """
+    normalized = token.replace("–", "-").replace("X", "x")
+    if normalized.startswith("-"):
+        return f"'{token}' no es válido: no se aceptan negativos. {usage_example('hoy')}"
+    if normalized == "x" or normalized.startswith("x") or normalized.endswith("x"):
+        return f"'{token}' va pegada, sin espacios: 65x3"
+    if normalized.endswith("-"):
+        return f"'{token}' es un rango incompleto: 80-85"
+    return f"'{token}' no se entiende. {usage_example('hoy')}"
+
+
+def parse_plan_entries(tokens: list[str]) -> list[PlanEntry] | str:
+    """Entradas del plan de /hoy a partir de sus valores, ya separados del nombre.
+
+    Reutiliza los tokens que produce split_exercise_and_numbers en el comando. Cada
+    valor se normaliza (en-dash "–" a "-", "X" a "x"; CL-15, CL-18) y se valida de
+    izquierda a derecha en este orden: gramática → porcentajes 1–120 (ambos extremos
+    del rango) → mínimo menor que máximo → repeticiones enteras ≥ 1. Solo se informa
+    el primer error, con motivo y ejemplo (RF-09, CL-17); un valor inválido invalida
+    toda la orden. Sin valores devuelve el aviso de uso de la 001. La conversión a
+    kilos no se hace aquí.
+    """
+    if not tokens:
+        return usage_example("hoy")
+    entries: list[PlanEntry] = []
+    for token in tokens:
+        match = _PLAN_TOKEN_RE.match(token.replace("–", "-").replace("X", "x"))
+        if match is None:
+            return _plan_grammar_error(token)
+        low_text, high_text, reps_text = match.groups()
+        low = parse_number(low_text)
+        high = parse_number(high_text) if high_text is not None else None
+        if not 1 <= low <= 120 or (high is not None and not 1 <= high <= 120):
+            return f"El porcentaje tiene que estar entre 1 y 120. {usage_example('hoy')}"
+        if high is not None and high <= low:
+            return (
+                "El mínimo del rango tiene que ser menor que el máximo. "
+                "Usa /hoy clean 80-85"
+            )
+        reps = int(reps_text) if reps_text is not None else None
+        if reps is not None and reps < 1:
+            return (
+                "Las repeticiones tienen que ser un entero de 1 en adelante. "
+                "Usa /hoy clean 65x3"
+            )
+        entries.append(PlanEntry(low, high, reps))
+    return entries
 
 
 def round_half_kg(kg: float) -> float:
