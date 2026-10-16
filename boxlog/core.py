@@ -233,6 +233,77 @@ def parse_plan_entries(tokens: list[str]) -> list[PlanEntry] | str:
     return entries
 
 
+class PlannedSet(NamedTuple):
+    """Kilos de una entrada del plan ya convertidos con el RM (RF-03)."""
+
+    weight_kg: float
+    range_max_kg: float | None
+    reps: int | None
+
+
+def convert_plan_entries(rm: float, entries: list[PlanEntry]) -> list[PlannedSet]:
+    """Kilos de cada entrada del plan con el RM vigente (RF-03, CL-16).
+
+    Cada extremo de un rango se convierte y se redondea a 0,5 kg por separado
+    (round_half_kg, empates hacia arriba); si tras redondear coinciden, la entrada
+    se devuelve como valor único (sin rango). No valida: las entradas ya pasaron
+    por parse_plan_entries.
+    """
+    sets: list[PlannedSet] = []
+    for entry in entries:
+        low = round_half_kg(rm * entry.pct_low / 100)
+        high = None
+        if entry.pct_high is not None:
+            high = round_half_kg(rm * entry.pct_high / 100)
+            if high == low:
+                high = None
+        sets.append(PlannedSet(low, high, entry.reps))
+    return sets
+
+
+def format_hoy_lines(entries: list[PlanEntry], sets: list[PlannedSet]) -> str:
+    """Respuesta de /hoy: una línea por entrada, en el orden dado (RF-03, A-1, CL-19).
+
+    Formatos: "70% → 84 kg", "65% × 3 → 52 kg", "80-85% → 64-68 kg" y
+    "80-85% × 1 → 64-68 kg". El rango de % es el pedido; los kilos muestran el
+    rango convertido o el valor único si el rango colapsó (CL-16).
+    """
+    lines = []
+    for entry, planned in zip(entries, sets):
+        pct = f"{format_kg(entry.pct_low)}%"
+        if entry.pct_high is not None:
+            pct = f"{format_kg(entry.pct_low)}-{format_kg(entry.pct_high)}%"
+        reps = f" × {entry.reps}" if entry.reps is not None else ""
+        kg = f"{format_kg(planned.weight_kg)} kg"
+        if planned.range_max_kg is not None:
+            kg = f"{format_kg(planned.weight_kg)}-{format_kg(planned.range_max_kg)} kg"
+        lines.append(f"{pct}{reps} → {kg}")
+    return "\n".join(lines)
+
+
+def format_plan_suffix(
+    planned_weight: float | None,
+    planned_max_kg: float | None = None,
+    planned_reps: int | None = None,
+) -> str:
+    """Sufijo del plan en la confirmación de /log (RF-04, A-1): '' cuando no hay plan.
+
+    Formatos: " (plan 84)" sin reps (igual que la 001), " (plan 66 kg × 1)" con reps,
+    " (plan 64-68 kg × 1)" con rango y reps y " (plan 64-68)" con rango sin reps.
+    Los valores salen de la serie (planned_weight_kg, planned_max_kg, planned_reps),
+    no de plan_items (A-3).
+    """
+    if planned_weight is None:
+        return ""
+    if planned_max_kg is not None:
+        text = f"{format_kg(planned_weight)}-{format_kg(planned_max_kg)}"
+    else:
+        text = format_kg(planned_weight)
+    if planned_reps is not None:
+        return f" (plan {text} kg × {planned_reps})"
+    return f" (plan {text})"
+
+
 def round_half_kg(kg: float) -> float:
     """Redondea al 0,5 kg más cercano, con los empates hacia arriba (RF-05)."""
     return math.floor(kg * 2 + 0.5) / 2
@@ -291,7 +362,9 @@ def build_summary(start: datetime, end: datetime, series: list[dict]) -> str:
     """Resumen de la sesión (RF-04).
 
     Cada serie es un dict con exercise, real_weight, reps y planned_weight
-    (None si no tuvo plan). El volumen y el peso máximo usan siempre el peso real.
+    (None si no tuvo plan); con planned_max_kg (plano de la serie, A-3) el par
+    plan→real se muestra como "64-68→66" (RF-05). El volumen y el peso máximo
+    usan siempre el peso real.
     """
     if not series:
         return "Sesión cerrada sin series."
@@ -318,16 +391,20 @@ def build_summary(start: datetime, end: datetime, series: list[dict]) -> str:
             f"{key}: {count} {serie_word} · {reps} {rep_word} · "
             f"volumen {format_kg(volume)} kg · máx {format_kg(max_weight)} kg"
         )
-        pairs = [
-            (item["planned_weight"], item["real_weight"])
-            for item in items
-            if item.get("planned_weight") is not None
-        ]
+        pairs = []
+        for item in items:
+            if item.get("planned_weight") is None:
+                continue
+            real = format_kg(item["real_weight"])
+            planned_max = item.get("planned_max_kg")
+            if planned_max is not None:
+                pairs.append(
+                    f"{format_kg(item['planned_weight'])}-{format_kg(planned_max)}→{real}"
+                )
+            else:
+                pairs.append(f"{format_kg(item['planned_weight'])}→{real}")
         if pairs:
-            pairs_text = ", ".join(
-                f"{format_kg(planned)}→{format_kg(real)}" for planned, real in pairs
-            )
-            lines.append(f"  plan→real: {pairs_text}")
+            lines.append(f"  plan→real: {', '.join(pairs)}")
     lines.append(f"Volumen total: {format_kg(total_volume)} kg")
     return "\n".join(lines)
 

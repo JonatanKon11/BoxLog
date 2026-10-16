@@ -9,11 +9,15 @@ import boxlog.core as core_module
 from boxlog.core import (
     LOCAL_UTC_OFFSET,
     PlanEntry,
+    PlannedSet,
     build_summary,
     convert_percentages,
+    convert_plan_entries,
     format_duration,
+    format_hoy_lines,
     format_kg,
     format_log_confirmation,
+    format_plan_suffix,
     format_start_time,
     help_text,
     is_today,
@@ -589,6 +593,179 @@ def test_format_log_confirmation_peso_con_coma_decimal():
         format_log_confirmation("front", 1, 42.5, 3, None)
         == "front · serie 1: 42,5 kg × 3"
     )
+
+
+# --- convert_plan_entries (RF-03, CL-16) ---
+
+
+def test_convert_plan_entries_valor_solo():
+    sets = convert_plan_entries(120, [PlanEntry(70.0, None, None)])
+    assert [(s.weight_kg, s.range_max_kg, s.reps) for s in sets] == [(84.0, None, None)]
+
+
+def test_convert_plan_entries_con_reps():
+    sets = convert_plan_entries(120, [PlanEntry(65.0, None, 3)])
+    assert [(s.weight_kg, s.range_max_kg, s.reps) for s in sets] == [(78.0, None, 3)]
+
+
+def test_convert_plan_entries_rango_se_redondea_por_extremo():
+    # RM 80 con 80-85% → 64 y 68 (caso de la spec).
+    sets = convert_plan_entries(80, [PlanEntry(80.0, 85.0, None)])
+    assert [(s.weight_kg, s.range_max_kg, s.reps) for s in sets] == [(64.0, 68.0, None)]
+
+
+def test_convert_plan_entries_rango_colapsa_si_los_extremos_coinciden():
+    # RM 50 con 80-80,2% → 40,0 y 40,0 → colapsa a valor único sin rango (CL-16).
+    sets = convert_plan_entries(50, [PlanEntry(80.0, 80.2, None)])
+    assert [(s.weight_kg, s.range_max_kg) for s in sets] == [(40.0, None)]
+
+
+def test_convert_plan_entries_empate_de_redondeo_no_colapsa():
+    # RM 50 con 80-80,5% → 40,0 y 40,5: 40,25 es empate y los empates van hacia arriba
+    # (round_half_kg, RF-05 de la 001); no colapsan extremos distintos.
+    sets = convert_plan_entries(50, [PlanEntry(80.0, 80.5, None)])
+    assert [(s.weight_kg, s.range_max_kg) for s in sets] == [(40.0, 40.5)]
+
+
+def test_convert_plan_entries_kilos_con_decimal_y_coma():
+    # RM 32 con 70% → 22,4 → 22,5 kg (redondeo a 0,5).
+    sets = convert_plan_entries(32, [PlanEntry(70.0, None, None)])
+    assert [s.weight_kg for s in sets] == [22.5]
+    assert format_kg(sets[0].weight_kg) == "22,5"
+
+
+def test_convert_plan_entries_lista_larga_completa_y_en_orden():
+    entries = parse_plan_entries("70 80 85 70 80 85 70 80 85".split())
+    assert not isinstance(entries, str)
+    sets = convert_plan_entries(100, entries)
+    assert [s.weight_kg for s in sets] == [70, 80, 85, 70, 80, 85, 70, 80, 85]
+
+
+# --- format_hoy_lines (RF-03, A-1, CL-19) ---
+
+
+def test_format_hoy_lines_sin_reps():
+    entries = [PlanEntry(70.0, None, None)]
+    sets = [PlannedSet(84.0, None, None)]
+    assert format_hoy_lines(entries, sets) == "70% → 84 kg"
+
+
+def test_format_hoy_lines_con_reps():
+    entries = [PlanEntry(65.0, None, 3)]
+    sets = [PlannedSet(52.0, None, 3)]
+    assert format_hoy_lines(entries, sets) == "65% × 3 → 52 kg"
+
+
+def test_format_hoy_lines_con_rango():
+    entries = [PlanEntry(80.0, 85.0, None)]
+    sets = [PlannedSet(64.0, 68.0, None)]
+    assert format_hoy_lines(entries, sets) == "80-85% → 64-68 kg"
+
+
+def test_format_hoy_lines_con_rango_y_reps():
+    entries = [PlanEntry(80.0, 85.0, 1)]
+    sets = [PlannedSet(64.0, 68.0, 1)]
+    assert format_hoy_lines(entries, sets) == "80-85% × 1 → 64-68 kg"
+
+
+def test_format_hoy_lines_porcentaje_con_decimal_usa_coma():
+    entries = [PlanEntry(77.5, None, None)]
+    sets = [PlannedSet(62.0, None, None)]
+    assert format_hoy_lines(entries, sets) == "77,5% → 62 kg"
+
+
+def test_format_hoy_lines_kilos_con_decimal_usan_coma():
+    entries = [PlanEntry(70.0, None, None)]
+    sets = convert_plan_entries(32, entries)  # 22,4 → 22,5 kg
+    assert format_hoy_lines(entries, sets) == "70% → 22,5 kg"
+
+
+def test_format_hoy_lines_rango_colapsado_muestra_valor_unico():
+    # Los % siguen mostrando el rango pedido; los kilos, el valor único colapsado (CL-16).
+    entries = [PlanEntry(80.0, 80.2, None)]
+    sets = convert_plan_entries(50, entries)
+    assert format_hoy_lines(entries, sets) == "80-80,2% → 40 kg"
+
+
+def test_format_hoy_lines_varias_lineas_en_orden():
+    entries = parse_plan_entries(["70", "65x3", "80-85x1"])
+    assert not isinstance(entries, str)
+    sets = convert_plan_entries(100, entries)
+    texto = format_hoy_lines(entries, sets)
+    assert texto.splitlines() == [
+        "70% → 70 kg",
+        "65% × 3 → 65 kg",
+        "80-85% × 1 → 80-85 kg",
+    ]
+
+
+# --- format_plan_suffix (RF-04, A-1) ---
+
+
+@pytest.mark.parametrize(
+    "planned,max_kg,reps,esperado",
+    [
+        (84.0, None, None, " (plan 84)"),  # igual que la 001
+        (66.0, None, 1, " (plan 66 kg × 1)"),
+        (64.0, 68.0, 1, " (plan 64-68 kg × 1)"),
+        (64.0, 68.0, None, " (plan 64-68)"),  # rango sin reps no lleva kg
+        (80.0, None, 3, " (plan 80 kg × 3)"),
+        (22.5, None, None, " (plan 22,5)"),
+        (22.5, None, 2, " (plan 22,5 kg × 2)"),
+        (None, None, None, ""),  # sin plan no añade nada
+        (None, None, 1, ""),  # rango sin plan (NULL) no muestra nada raro
+        (None, 68.0, None, ""),
+    ],
+)
+def test_format_plan_suffix(planned, max_kg, reps, esperado):
+    assert format_plan_suffix(planned, max_kg, reps) == esperado
+
+
+# --- pares con rango en build_summary (RF-05, A-3) ---
+
+
+def test_build_summary_par_de_rango_desde_la_serie():
+    series = [
+        {
+            "exercise": "front squat",
+            "real_weight": 66,
+            "reps": 2,
+            "planned_weight": 64,
+            "planned_max_kg": 68,
+            "planned_reps": 2,
+        }
+    ]
+    texto = build_summary(INICIO, INICIO + timedelta(minutes=10), series)
+    assert "64-68→66" in texto
+
+
+def test_build_summary_serie_v1_sin_maximo_da_par_simple():
+    # Series existentes (sin planned_max_kg): el par sigue como en la 001 (CL-9).
+    series = [
+        {
+            "exercise": "front squat",
+            "real_weight": 66,
+            "reps": 2,
+            "planned_weight": 64,
+        }
+    ]
+    texto = build_summary(INICIO, INICIO + timedelta(minutes=10), series)
+    assert "64→66" in texto
+
+
+def test_build_summary_maximo_sin_plan_no_da_par():
+    # Dato imposible por esquema, pero la lectura no debe mostrar nada raro.
+    series = [
+        {
+            "exercise": "front squat",
+            "real_weight": 66,
+            "reps": 2,
+            "planned_weight": None,
+            "planned_max_kg": 68,
+        }
+    ]
+    texto = build_summary(INICIO, INICIO + timedelta(minutes=10), series)
+    assert "plan→real" not in texto
 
 
 # --- separación de capas (constitución 3) ---
