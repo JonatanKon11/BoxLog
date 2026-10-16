@@ -2,11 +2,12 @@
 
 import pytest
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import boxlog.core as core_module
 from boxlog.core import (
+    LOCAL_UTC_OFFSET,
     build_summary,
     convert_percentages,
     format_duration,
@@ -14,12 +15,15 @@ from boxlog.core import (
     format_log_confirmation,
     format_start_time,
     help_text,
+    is_today,
     normalize_exercise,
     parse_log_args,
     parse_number,
     round_half_kg,
     split_exercise_and_numbers,
+    to_local,
     usage_example,
+    utc_now,
     validate_percentages,
     validate_profile,
     validate_rm,
@@ -315,6 +319,50 @@ def test_format_duration_hora_y_minutos():
 
 def test_format_duration_hora_completa():
     assert format_duration(3600) == "1 h 0 min"
+
+
+# --- zona horaria (RF-02, CL-12) ---
+
+
+def test_local_utc_offset_es_utc_menos_tres_horas():
+    assert LOCAL_UTC_OFFSET == timedelta(hours=-3)
+
+
+def test_utc_now_devuelve_hora_consciente_en_utc():
+    ahora = utc_now()
+    assert ahora.tzinfo is not None
+    assert ahora.utcoffset() == timedelta(0)
+
+
+def test_to_local_resta_tres_horas():
+    marca = datetime(2026, 10, 12, 23, 35, tzinfo=timezone.utc)
+    local = to_local(marca)
+    assert (local.day, local.hour, local.minute) == (12, 20, 35)
+
+
+def test_to_local_cambia_el_dia_cerca_de_medianoche():
+    # 01:00 UTC = 22:00 del día anterior en hora local.
+    marca = datetime(2026, 10, 14, 1, 0, tzinfo=timezone.utc)
+    local = to_local(marca)
+    assert (local.day, local.hour, local.minute) == (13, 22, 0)
+
+
+def test_is_today_dentro_del_mismo_dia_local():
+    # 01:00 UTC del 14 es 22:00 del 13 en local; a las 23:00 UTC del 13 sigue siendo "hoy" (CL-12).
+    marca = datetime(2026, 10, 14, 1, 0, tzinfo=timezone.utc)
+    ahora = datetime(2026, 10, 13, 23, 0, tzinfo=timezone.utc)
+    assert is_today(marca, ahora) is True
+
+
+def test_is_today_distinto_dia_local():
+    marca = datetime(2026, 10, 14, 1, 0, tzinfo=timezone.utc)  # 13 local
+    ahora = datetime(2026, 10, 14, 20, 0, tzinfo=timezone.utc)  # 14 local
+    assert is_today(marca, ahora) is False
+
+
+def test_is_today_acepta_marcas_naive_como_utc():
+    # Todas las marcas de la base son UTC: una marca sin huso se interpreta como UTC (RF-02).
+    assert is_today(datetime(2026, 10, 14, 1, 0), datetime(2026, 10, 13, 23, 0)) is True
 
 
 # --- format_start_time (RF-03) ---

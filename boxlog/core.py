@@ -2,7 +2,11 @@
 
 import math
 import re
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
+
+# Argentina: UTC-3, sin horario de verano. Desfase fijo (RF-02, RNF-2): no se
+# usa zoneinfo porque exigiría la dependencia tzdata en Windows.
+LOCAL_UTC_OFFSET = timedelta(hours=-3)
 
 # Solo notación decimal simple: opcional '-', dígitos y opcional parte decimal.
 # Sin nan, inf ni notación científica (1e3).
@@ -178,6 +182,28 @@ def format_duration(seconds: float) -> str:
     if hours:
         return f"{hours} h {minutes} min"
     return f"{minutes} min"
+
+
+def utc_now() -> datetime:
+    """Hora actual consciente en UTC: la única base con la que se trabaja (RF-02)."""
+    return datetime.now(timezone.utc)
+
+
+def _as_utc(dt: datetime) -> datetime:
+    """Interpreta una marca sin huso como UTC (todas las marcas de la base son UTC)."""
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def to_local(dt: datetime) -> datetime:
+    """Convierte una marca UTC a hora local (UTC-3; RF-02)."""
+    return _as_utc(dt) + LOCAL_UTC_OFFSET
+
+
+def is_today(mark: datetime, now: datetime) -> bool:
+    """¿La marca cae en el día local de ahora? (CL-12: el día se decide en local)."""
+    return to_local(mark).date() == to_local(now).date()
 
 
 def format_start_time(started_at: str, now: datetime) -> str:

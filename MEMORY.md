@@ -1,7 +1,8 @@
 # MEMORY.md — BoxLog
 
 ## Estado actual
-- Fase: 001-strength-logging cerrada (T1–T12 hechas + ajuste de T11 en `bot.py`). Spec viva actualizada; `core.py`, `db.py`, `commands.py` y `bot.py` completos; 245 tests en verde. Hay `.env` real local (ignorado por git) y los tests de config lo parchean con la fixture `sin_dotenv`.
+- Fase: 002-plan-model-and-timezone activa en la rama **spec-002** (sin commits: los hace el usuario). Tarea T1 hecha de T1–T7 (`specs/002-plan-model-and-timezone/`); 252 tests en verde. Spec 001 cerrada (T1–T12); hay `.env` real local (ignorado por git) y los tests de config lo parchean con la fixture `sin_dotenv`.
+- v0.2: modelo de plan (reps y rangos de porcentaje), todas las marcas en UTC (hora local UTC-3 fija, sin zoneinfo) y migración 1→2 con respaldo. Decisiones A-1 a A-5 ya resueltas en spec.md/plan.md de la 002.
 - Nombre provisional: BoxLog. Destino: GitHub como portfolio.
 - Uso inicial: solo yo; si funciona, se comparte.
 
@@ -31,7 +32,8 @@
 - En python-telegram-bot 22.8, `filters.COMMAND` es una instancia (no se invoca): para lista de comandos usar `filters.Command([...])`; la decisión dueño/desconocido vive en `bot.dispatch`, separada de los handlers.
 - `load_dotenv()` de python-dotenv busca subiendo desde la ubicación del módulo que lo llama (aquí `boxlog/bot.py`), no desde el directorio de trabajo: en tests hay que parchear `bot.load_dotenv`, un `chdir` no aísla.
 - Sin `add_error_handler`, python-telegram-bot imprime el traceback completo ("No error handlers are registered") por cada reintento de red: registrar uno y decidir el texto con `bot.format_error_log(error, token)` (NetworkError/TimedOut → una línea; resto → completo; token redactado siempre).
+- T1 de la 002: no cambiar la semántica de una función que otra capa aún usa con el contrato viejo (`core.format_start_time` sigue recibiendo marcas locales hasta T5, cuando db escribe UTC y commands se cablea); si no, la suite se rompe sin motivo y hay que tocar tests de otra tarea. Respetar el orden de riesgo del plan §6 (helpers puros primero).
 
 ## Próximos pasos
-1. Commit de T1–T12 (spec 001 cerrada; no subir nunca `.env` ni `data/`).
-2. Decidir la siguiente spec (v0.2: WOD, calorías METs como estimación, audios, datos de Garmin).
+1. Seguir la 002 en spec-002: T2 (parser de /hoy en core), T3 (conversión y formatos con ×), T4 (esquema v2 y UTC en db), T5 (commands + ajuste de format_start_time), T6 (migración), T7 (ensayo sobre copia + e2e + README + MEMORY y paso manual del usuario con el bot apagado).
+2. Commits de la 002 por el usuario al cerrarla; nunca subir `.env` ni `data/`.

@@ -2,10 +2,11 @@
 
 Ordenadas por dependencia y de menor a mayor riesgo (plan §6). Tests primero: cada tarea de código empieza por escribir sus tests y no se avanza con `python -m pytest` en rojo (spec, criterios de finalización). **PÁRATE al terminar cada tarea**: espera a la siguiente petición del usuario antes de continuar.
 
-- [ ] **T1. core: zona horaria pura** — RF-02, CL-12, A-2
+- [x] **T1. core: zona horaria pura** — RF-02, CL-12, A-2
+  - Ajuste: la adaptación de `format_start_time` (marca UTC → local) se traslada a T5 junto con el cableado de commands: en T1 la base todavía escribe horas locales (`_now()` cambia a UTC en T4) y cambiar solo el formato dejaría los tests de commands de la 001 en rojo sin motivo. T1 queda como el §6.1 del plan: constante y helpers puros.
   - Tests primero: `to_local` resta 3 h a una marca UTC, marca UTC "2026-10-14T01:00:00+00:00" con `now` local 14/10 23:00 se considera "hoy" (cambio de día en local, CL-12), `format_start_time` sobre marcas UTC devuelve los mismos textos legibles de la 001 ("las 20:35", "el 12/10 a las 22:00", "Hoy").
-  - Implementar `LOCAL_UTC_OFFSET` (timedelta -3 h, con comentario Argentina/UTC-3/sin DST y sin zoneinfo), `utc_now`, `to_local`, `is_today` y adaptar `format_start_time` (interpreta la marca como UTC y compara el día en local).
-  - Hecho cuando: `python -m pytest tests/test_core.py` en verde y `core` sigue sin importar Telegram ni sqlite3.
+  - Implementar `LOCAL_UTC_OFFSET` (timedelta -3 h, con comentario Argentina/UTC-3/sin DST y sin zoneinfo), `utc_now`, `to_local`, `is_today` (marcas sin huso se tratan como UTC) y, en T5, adaptar `format_start_time` (interpreta la marca como UTC y compara el día en local).
+  - Hecho cuando: `python -m pytest tests/test_core.py` en verde y `core` sigue sin importar Telegram ni sqlite3. ✔ 252 tests en verde, sin cambiar ningún test de la 001.
   - PÁRATE al terminar.
 
 - [ ] **T2. core: parser de entradas de /hoy** — RF-03 (parser y avisos), CL-13, CL-14, CL-15 (entrada), CL-17 (A-4), CL-18 (A-5)
@@ -28,7 +29,7 @@ Ordenadas por dependencia y de menor a mayor riesgo (plan §6). Tests primero: c
 
 - [ ] **T5. commands: /hoy, /log, /inicio y /fin con plan nuevo y horas locales** — RF-02, RF-03, RF-04, RF-05, CL-12, CL-17, CL-18, CL-19
   - Tests primero: `cmd_hoy` con las cuatro sintaxis y respuesta con ×, cada aviso (motivo + ejemplo) y primero-error (CL-17); `cmd_log` con plan de reps/rango → confirmación con × y serie con el plan copiado (A-3), reps reales distintas al plan sin aviso (CL-6); `cmd_fin` con par de rango leído de la serie y resumen igual que antes para lo simple; `cmd_inicio`/`cmd_fin` con marcas UTC cercanas a la medianoche → "Hoy" según CL-12 y duración correcta.
-  - Actualizar de la 001 los tests tocados por las enmiendas: horas (`format_start_time` con marcas UTC), respuesta de /hoy (solo lo que cambie por formato/×; los porcentajes simples no cambian), confirmación de /log si espera "x" → ×, y cualquier aserción de `user_version = 1`.
+  - Actualizar de la 001 los tests tocados por las enmiendas: horas (`format_start_time` con marcas UTC), respuesta de /hoy (solo lo que cambie por formato/×; los porcentajes simples no cambian), confirmación de /log si espera "x" → ×, y cualquier aserción de `user_version = 1`. **Disciplina: ningún test de la 001 se cambia sin justificación; al terminar, listar en el informe CADA test modificado con su motivo (qué enmienda de la 002 lo justifica: A-1, A-2, A-3, CL-12, etc.).**
   - Implementar el cableado en `commands.py` (valida con core, persiste con db, devuelve texto; sin imports de Telegram).
   - Hecho cuando: `python -m pytest tests/test_commands.py` y `tests/test_core.py` en verde; `bot.py` sin cambios.
   - PÁRATE al terminar.
@@ -41,7 +42,8 @@ Ordenadas por dependencia y de menor a mayor riesgo (plan §6). Tests primero: c
 
 - [ ] **T7. Cierre: ensayo de migración sobre copia real, e2e, README y MEMORY** — RF-01 a RF-06, CL-1 a CL-19, RNF-1 (cierre de la spec)
   - **Importante: el bot debe estar APAGADO** al migrar cualquier base real (una sesión abierta durante la migración escribiría marcas sobre una base en transición). La migración real se ejecuta en el siguiente arranque del bot; el ensayo de esta tarea se hace **solo sobre una copia**.
-  - Ensayo: copiar `data/boxlog.db` a `data/boxlog.ensayo.db` (nunca migrar la original en esta tarea), abrir la copia, registrar `PRAGMA user_version`, conteos de filas por tabla y un puñado de horas concretas antes de migrar; ejecutar `init_schema`; comparar: mismo `user_version = 2`, mismos conteos, cada hora +3 h exactamente, columnas nuevas presentes y `<path>.bak-v1` creado. Concluir el ensayo indicando el resultado al usuario (la migración de la original quedará para el arranque real, con el bot apagado).
+  - Ensayo: copiar `data/boxlog.db` a `data/boxlog.ensayo.db` (nunca migrar la original en esta tarea), abrir la copia, registrar `PRAGMA user_version`, conteos de filas por tabla y un puñado de horas concretas antes de migrar; ejecutar `init_schema`; comparar: mismo `user_version = 2`, mismos conteos, cada hora +3 h exactamente, columnas nuevas presentes y `<path>.bak-v1` creado. Concluir el ensayo indicando el resultado al usuario.
+  - **Paso manual del usuario (migración de la base real), indicado por el agente pero ejecutado por el usuario:** (1) apagar el bot; (2) hacer una copia manual de `data/boxlog.db` (p. ej. `data/boxlog.manual-backup.db`); (3) recién entonces arrancar el bot con el código nuevo (`python -m boxlog.bot`), que migrará la base real en su arranque; (4) comprobar el resultado con una consulta de solo lectura (conteos por tabla y algunas horas, p. ej. vía `sqlite3` o un test de lectura) — nunca reescribiendo nada.
   - Tests primero: ampliar `tests/test_e2e.py` con una pasada del ciclo que use "80-85x1": `/hoy` con rango, confirmación de `/log` con "(plan 64-68 kg × 1)" y resumen de `/fin` con el par "64-68->66"; el ciclo completo de la 001 debe seguir en verde sin cambios de texto.
   - Actualizar `README.md` (sintaxis del plan con reps y rangos, formato de respuesta con ×, nota de la zona horaria y de la migración automática con respaldo) y `MEMORY.md` (estado, decisiones A-1 a A-5, aprendizajes, próxima spec).
   - Hecho cuando: `python -m pytest` completa en verde, todos los RF y CL de la spec tienen su test, el ensayo sobre la copia quedó documentado y el diff no contiene token ni datos personales.
