@@ -1,7 +1,7 @@
-"""Acceso a SQLite: esquema y consultas. Sin lógica de negocio ni texto de respuesta."""
+"""Acceso a SQLite: esquema, migraciones y consultas. Sin lógica de negocio ni texto de respuesta."""
 
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 # Orden de creación: sessions y plan_items antes de series (FKs).
@@ -48,11 +48,11 @@ CREATE TABLE IF NOT EXISTS series (
 );
 """
 
-# Protección temporal: una base v1 (como la real) no se toca hasta la migración (T6).
-_V1_ERROR = (
-    "La base está en la versión 1: la migración a la versión 2 aún no está "
-    "implementada (T6). No se abre para no dañarla."
-)
+# Conversión de las marcas v1 (hora local argentina, UTC-3) a UTC: +3 h (RF-02).
+_LOCAL_TO_UTC = timedelta(hours=3)
+
+# Sufijo de la copia de seguridad que se crea antes de migrar (RF-06, RNF-1).
+_BACKUP_SUFFIX = ".bak-v1"
 
 
 def connect(path) -> sqlite3.Connection:
@@ -69,19 +69,108 @@ def connect(path) -> sqlite3.Connection:
 
 
 def init_schema(connection: sqlite3.Connection) -> None:
-    """Crea las tablas si no existen, en el esquema v2 (RF-06).
+    """Crea las tablas si no existen y migra según la versión (RF-06, RNF-1, plan §2).
 
-    Repetirlo no borra datos ni cambia la versión (RNF-3). Una base nueva nace
-    en v2 (CL-11); una base en la versión 1 se rechaza con un error claro hasta
-    que T6 implemente la migración, para no dañarla.
+    Ramas por user_version: 0 = base nueva → esquema v2 directo, sin respaldo
+    (CL-11); 1 = migración 1→2 con respaldo previo y transacción; 2 o superior
+    = no-op: repetir no borra datos ni recrea el respaldo (RNF-3, CL-10).
     """
     version = connection.execute("PRAGMA user_version").fetchone()[0]
     if version == 1:
-        raise RuntimeError(_V1_ERROR)
+        _migrate_v1_to_v2(connection)
+        return
     connection.executescript(_SCHEMA)
     if version == 0:
         connection.execute("PRAGMA user_version = 2")
     connection.commit()
+
+
+def _backup_v1(connection: sqlite3.Connection) -> None:
+    """Copia de seguridad de la base v1 antes de migrarla (RF-06, RNF-1, plan §2).
+
+    Solo para bases en archivo (en :memory: no hay nada que copiar) y solo si
+    <ruta>.bak-v1 todavía no existe: nunca se recrea ni se sobrescribe (CL-10).
+    La ruta sale de PRAGMA database_list (SQLite la guarda en la conexión), así
+    init_schema y sus llamadores no cambian de firma. Un respaldo que falle a
+    medias se borra, para no bloquear el siguiente intento.
+    """
+    path = connection.execute("PRAGMA database_list").fetchone()[2]
+    if not path:
+        return
+    destino_path = Path(f"{path}{_BACKUP_SUFFIX}")
+    if destino_path.exists():
+        return
+    try:
+        destino = sqlite3.connect(str(destino_path))
+        try:
+            connection.backup(destino)
+        finally:
+            destino.close()
+    except Exception:
+        destino_path.unlink(missing_ok=True)
+        raise
+
+
+def _shift_marks_to_utc(
+    connection: sqlite3.Connection, table: str, columns: tuple[str, ...]
+) -> None:
+    """Suma 3 h a cada marca de hora local de la tabla, en formato ISO sin huso (RF-02).
+
+    La conversión es en Python con datetime.fromisoformat + timedelta, fila a
+    fila por id, conservando el formato ISO con "T" de la 001 (RNF-2: aritmética
+    de horas, sin dependencias). Tablas y columnas son constantes internas,
+    nunca entrada del usuario. Debe correr dentro de la transacción de migración.
+    """
+    for column in columns:
+        rows = connection.execute(
+            f"SELECT id, {column} FROM {table} WHERE {column} IS NOT NULL"
+        ).fetchall()
+        for row in rows:
+            moved = datetime.fromisoformat(row[column]) + _LOCAL_TO_UTC
+            connection.execute(
+                f"UPDATE {table} SET {column} = ? WHERE id = ?",
+                (moved.isoformat(), row["id"]),
+            )
+
+
+def _migrate_v1_to_v2(connection: sqlite3.Connection) -> None:
+    """Migra una base v1 a v2: respaldo, cuatro columnas y horas a UTC (plan §2).
+
+    Todo ocurre dentro de una transacción manual (BEGIN IMMEDIATE; nunca
+    executescript, que emitiría un COMMIT implícito y rompería la atomicidad).
+    Si algo falla: ROLLBACK total —la base queda íntegra en v1, sin columnas
+    parciales ni horas a medias— y se relanza un error claro; el respaldo,
+    creado antes, sigue disponible y un reintento vuelve a migrar entero.
+    Al terminar user_version = 2, por lo que repetir la llamada no convierte
+    horas dos veces (idempotencia).
+    """
+    _backup_v1(connection)
+    connection.execute("BEGIN IMMEDIATE")
+    if not connection.in_transaction:
+        raise RuntimeError(
+            "La migración de la base de 1 a 2 no pudo abrir su transacción."
+        )
+    try:
+        for statement in (
+            "ALTER TABLE plan_items ADD COLUMN reps INTEGER",
+            "ALTER TABLE plan_items ADD COLUMN range_max_kg REAL",
+            "ALTER TABLE series ADD COLUMN planned_reps INTEGER",
+            "ALTER TABLE series ADD COLUMN planned_max_kg REAL",
+        ):
+            connection.execute(statement)
+        _shift_marks_to_utc(connection, "sessions", ("started_at", "ended_at"))
+        _shift_marks_to_utc(connection, "profile", ("created_at",))
+        _shift_marks_to_utc(connection, "rm_history", ("created_at",))
+        _shift_marks_to_utc(connection, "series", ("created_at",))
+        connection.execute("PRAGMA user_version = 2")
+        connection.commit()
+    except Exception as exc:
+        connection.rollback()
+        raise RuntimeError(
+            "La migración de la base de 1 a 2 falló y se deshizo por completo: la base"
+            " sigue en la versión 1 y el respaldo .bak-v1 queda disponible."
+            f" Detalle: {exc}"
+        ) from exc
 
 
 def _now() -> str:

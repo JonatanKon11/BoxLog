@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from boxlog import db
+from boxlog import commands, db
 from boxlog.core import PlannedSet
 
 
@@ -441,13 +441,332 @@ def test_consumo_en_orden_con_nueve_valores_repetidos_y_deshacer(conn):
     assert db.get_next_plan_item(conn, sid, "clean")["id"] == vistos[7]
 
 
-def test_init_schema_rechaza_una_base_en_version_1(tmp_path):
-    connection = db.connect(tmp_path / "vieja.db")
+# --- migración 1 → 2 (T6: RF-02, RF-06, CL-9, CL-10, CL-11, RNF-1) ---
+# (sustituye al test de protección v1 de T4: la rama 1 ahora migra en vez de rechazar)
+
+# Esquema EXACTO de la spec 001 (user_version 1), para construir bases sintéticas.
+_SCHEMA_V1 = """
+CREATE TABLE IF NOT EXISTS profile (
+    id INTEGER PRIMARY KEY,
+    weight_kg REAL NOT NULL,
+    height_cm REAL NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS rm_history (
+    id INTEGER PRIMARY KEY,
+    exercise TEXT NOT NULL,
+    weight_kg REAL NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS sessions (
+    id INTEGER PRIMARY KEY,
+    started_at TEXT NOT NULL,
+    ended_at TEXT
+);
+CREATE TABLE IF NOT EXISTS plan_items (
+    id INTEGER PRIMARY KEY,
+    session_id INTEGER NOT NULL REFERENCES sessions(id),
+    exercise TEXT NOT NULL,
+    position INTEGER NOT NULL,
+    weight_kg REAL NOT NULL,
+    consumed INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS series (
+    id INTEGER PRIMARY KEY,
+    session_id INTEGER NOT NULL REFERENCES sessions(id),
+    exercise TEXT NOT NULL,
+    real_weight_kg REAL NOT NULL,
+    reps INTEGER NOT NULL,
+    planned_weight_kg REAL,
+    plan_item_id INTEGER REFERENCES plan_items(id) ON DELETE SET NULL,
+    created_at TEXT NOT NULL
+);
+"""
+
+# Datos de partida (horas locales de la 001) y lo que debe quedar tras el +3 h,
+# con cruces de día, mes y año entre las filas de la misma tabla.
+_SESIONES_LOCAL = [
+    (1, "2026-10-16T23:30:00", "2026-10-17T01:15:00"),
+    (2, "2026-12-31T22:00:00", None),  # sesión abierta: ended_at NULL
+]
+_SESIONES_UTC = [
+    (1, "2026-10-17T02:30:00", "2026-10-17T04:15:00"),  # 23:30 → 02:30 del día siguiente
+    (2, "2027-01-01T01:00:00", None),  # 22:00 del 31/12 → 01:00 del 01/01
+]
+_PERFIL_LOCAL = [(1, 78.5, 175.0, "2026-11-30T23:50:00")]
+_PERFIL_UTC = [(1, 78.5, 175.0, "2026-12-01T02:50:00")]  # cruza mes
+_RM_LOCAL = [
+    (1, "clean", 120.0, "2026-05-01T19:00:00"),
+    (2, "front squat", 170.0, "2026-07-31T23:30:00"),  # cruza mes
+]
+_RM_UTC = [
+    (1, "clean", 120.0, "2026-05-01T22:00:00"),
+    (2, "front squat", 170.0, "2026-08-01T02:30:00"),
+]
+_SERIES_LOCAL = [
+    (1, 1, "clean", 84.0, 5, 84.0, 1, "2026-10-16T23:40:00"),  # cruza día
+    (2, 1, "clean", 96.0, 3, 96.0, None, "2026-10-17T00:10:00"),
+]
+_PLAN_LOCAL = [
+    (1, 1, "clean", 1, 84.0, 1),  # consumido por la serie 1
+    (2, 1, "clean", 2, 96.0, 0),  # sin consumir
+]
+_CONTEOS = {"profile": 1, "rm_history": 2, "sessions": 2, "plan_items": 2, "series": 2}
+
+
+def _crear_base_v1(base) -> sqlite3.Connection:
+    """Base v1 sintética con el esquema exacto de la 001 y datos en todas las tablas."""
+    connection = db.connect(base)
+    connection.executescript(_SCHEMA_V1)
     connection.execute("PRAGMA user_version = 1")
+    connection.execute(
+        "INSERT INTO profile (weight_kg, height_cm, created_at) VALUES (?, ?, ?)",
+        _PERFIL_LOCAL[0][1:],
+    )
+    connection.executemany(
+        "INSERT INTO rm_history (id, exercise, weight_kg, created_at)"
+        " VALUES (?, ?, ?, ?)",
+        _RM_LOCAL,
+    )
+    connection.executemany(
+        "INSERT INTO sessions (id, started_at, ended_at) VALUES (?, ?, ?)",
+        _SESIONES_LOCAL,
+    )
+    connection.executemany(
+        "INSERT INTO plan_items (id, session_id, exercise, position, weight_kg,"
+        " consumed) VALUES (?, ?, ?, ?, ?, ?)",
+        _PLAN_LOCAL,
+    )
+    connection.executemany(
+        "INSERT INTO series (id, session_id, exercise, real_weight_kg, reps,"
+        " planned_weight_kg, plan_item_id, created_at)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        _SERIES_LOCAL,
+    )
     connection.commit()
+    return connection
+
+
+@pytest.fixture
+def base_v1(tmp_path):
+    """(conexión, ruta) de una base v1 sintética; la cierra al terminar."""
+    base = tmp_path / "boxlog.db"
+    connection = _crear_base_v1(base)
+    yield connection, base
+    connection.close()
+
+
+def _filas(connection, sql) -> list[tuple]:
+    return [tuple(row) for row in connection.execute(sql).fetchall()]
+
+
+def _todas_las_horas(connection) -> list[tuple]:
+    """Snapshot de todas las marcas de la base, para comparar antes/después."""
+    return (
+        _filas(connection, "SELECT id, started_at, ended_at FROM sessions ORDER BY id")
+        + _filas(connection, "SELECT id, created_at FROM profile ORDER BY id")
+        + _filas(connection, "SELECT id, created_at FROM rm_history ORDER BY id")
+        + _filas(connection, "SELECT id, created_at FROM series ORDER BY id")
+    )
+
+
+def test_migracion_v1_a_v2_completa(base_v1):
+    connection, base = base_v1
+    db.init_schema(connection)
+
+    assert connection.execute("PRAGMA user_version").fetchone()[0] == 2  # RF-06
+    assert connection.in_transaction is False  # la transacción terminó con COMMIT
+    columnas_plan = {
+        row["name"] for row in connection.execute("PRAGMA table_info(plan_items)")
+    }
+    columnas_serie = {
+        row["name"] for row in connection.execute("PRAGMA table_info(series)")
+    }
+    assert {"reps", "range_max_kg"} <= columnas_plan
+    assert {"planned_reps", "planned_max_kg"} <= columnas_serie
+    assert "logged_at" not in columnas_serie  # A-2: la hora de serie ya existía
+
+    # Filas viejas: columnas nuevas vacías (CL-9) y todo lo demás intacto (RNF-1).
+    assert _filas(
+        connection,
+        "SELECT id, session_id, exercise, position, weight_kg, consumed, reps,"
+        " range_max_kg FROM plan_items ORDER BY id",
+    ) == [
+        (1, 1, "clean", 1, 84.0, 1, None, None),
+        (2, 1, "clean", 2, 96.0, 0, None, None),
+    ]
+    assert _filas(
+        connection,
+        "SELECT id, session_id, exercise, real_weight_kg, reps, planned_weight_kg,"
+        " planned_reps, planned_max_kg, plan_item_id, created_at FROM series"
+        " ORDER BY id",
+    ) == [
+        (1, 1, "clean", 84.0, 5, 84.0, None, None, 1, "2026-10-17T02:40:00"),
+        (2, 1, "clean", 96.0, 3, 96.0, None, None, None, "2026-10-17T03:10:00"),
+    ]
+    for tabla, total in _CONTEOS.items():
+        assert connection.execute(f"SELECT COUNT(*) FROM {tabla}").fetchone()[0] == total
+
+    # Todas las marcas +3 h exactas, con cruces de día, mes y año (RF-02).
+    assert _filas(
+        connection, "SELECT id, started_at, ended_at FROM sessions ORDER BY id"
+    ) == _SESIONES_UTC
+    assert _filas(
+        connection, "SELECT id, weight_kg, height_cm, created_at FROM profile ORDER BY id"
+    ) == _PERFIL_UTC
+    assert _filas(
+        connection,
+        "SELECT id, exercise, weight_kg, created_at FROM rm_history ORDER BY id",
+    ) == _RM_UTC
+
+    # CL-9: lo copiado en las series viejas queda intacto y los RM siguen ahí.
+    assert [s["planned_weight_kg"] for s in db.list_series(connection, 1)] == [84.0, 96.0]
+    assert db.get_rm(connection, "clean") == 120.0
+    assert db.get_open_session(connection)["id"] == 2  # la sesión abierta sobrevive
+
+
+def test_migracion_crea_respaldo_v1_con_los_datos_originales(base_v1):
+    connection, base = base_v1
+    db.init_schema(connection)
+    respaldo = db.connect(base.with_name(base.name + ".bak-v1"))
     try:
-        with pytest.raises(RuntimeError, match="versión 1"):
-            db.init_schema(connection)
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 1  # intacta
+        assert respaldo.execute("PRAGMA user_version").fetchone()[0] == 1
+        columnas = {
+            row["name"] for row in respaldo.execute("PRAGMA table_info(series)")
+        }
+        assert "planned_reps" not in columnas and "planned_max_kg" not in columnas
+        # Los datos y las horas originales (sin +3 h) quedan tal cual.
+        assert _filas(
+            respaldo, "SELECT id, started_at, ended_at FROM sessions ORDER BY id"
+        ) == _SESIONES_LOCAL
+        assert _filas(
+            respaldo,
+            "SELECT id, exercise, weight_kg, created_at FROM rm_history ORDER BY id",
+        ) == _RM_LOCAL
+        assert _filas(
+            respaldo,
+            "SELECT id, session_id, exercise, real_weight_kg, reps,"
+            " planned_weight_kg, plan_item_id, created_at FROM series ORDER BY id",
+        ) == _SERIES_LOCAL
+        for tabla, total in _CONTEOS.items():
+            assert respaldo.execute(f"SELECT COUNT(*) FROM {tabla}").fetchone()[0] == total
+    finally:
+        respaldo.close()
+
+
+def test_migracion_segunda_apertura_no_cambia_nada(base_v1):
+    connection, base = base_v1
+    db.init_schema(connection)
+    horas = _todas_las_horas(connection)
+    db.init_schema(connection)  # CL-10: reabrir sobre una base ya en v2
+    assert connection.execute("PRAGMA user_version").fetchone()[0] == 2
+    assert _todas_las_horas(connection) == horas  # nada de un segundo +3 h
+    for tabla, total in _CONTEOS.items():
+        assert connection.execute(f"SELECT COUNT(*) FROM {tabla}").fetchone()[0] == total
+
+
+def test_migracion_no_sobrescribe_un_respaldo_existente(tmp_path):
+    base = tmp_path / "boxlog.db"
+    respaldo = tmp_path / "boxlog.db.bak-v1"
+    respaldo.write_bytes(b"respaldo anterior, no me toques")
+    connection = _crear_base_v1(base)
+    try:
+        db.init_schema(connection)
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert respaldo.read_bytes() == b"respaldo anterior, no me toques"
     finally:
         connection.close()
+
+
+def test_migracion_fallida_se_revierte_y_permite_reintentar(base_v1):
+    connection, base = base_v1
+    respaldo = base.with_name(base.name + ".bak-v1")
+    connection.execute(
+        "CREATE TRIGGER fallo_simulado BEFORE UPDATE ON series"
+        " WHEN NEW.created_at <> OLD.created_at"
+        " BEGIN SELECT RAISE(ABORT, 'fallo simulado'); END"
+    )
+    horas_originales = _todas_las_horas(connection)
+
+    with pytest.raises(RuntimeError, match="se deshizo por completo"):
+        db.init_schema(connection)
+
+    # Rollback total: versión 1, sin columnas nuevas y sin horas cambiadas.
+    assert connection.execute("PRAGMA user_version").fetchone()[0] == 1
+    assert "reps" not in {
+        row["name"] for row in connection.execute("PRAGMA table_info(plan_items)")
+    }
+    assert "planned_reps" not in {
+        row["name"] for row in connection.execute("PRAGMA table_info(series)")
+    }
+    assert _todas_las_horas(connection) == horas_originales
+    assert connection.in_transaction is False  # ROLLBACK ejecutado
+    assert respaldo.exists()  # el respaldo queda disponible (RNF-1)
+
+    # Al quitar el trigger, un reintento migra entero.
+    connection.execute("DROP TRIGGER fallo_simulado")
+    db.init_schema(connection)
+    assert connection.execute("PRAGMA user_version").fetchone()[0] == 2
+    assert _filas(
+        connection, "SELECT id, started_at, ended_at FROM sessions ORDER BY id"
+    ) == _SESIONES_UTC
+
+
+def test_migracion_corre_dentro_de_una_transaccion(base_v1, monkeypatch):
+    connection, base = base_v1
+    observado: dict[str, bool] = {}
+    original = db._shift_marks_to_utc
+
+    def espiar(con, tabla, columnas):
+        observado[tabla] = con.in_transaction
+        original(con, tabla, columnas)
+
+    monkeypatch.setattr(db, "_shift_marks_to_utc", espiar)
+    db.init_schema(connection)
+    # Cada conversión de horas ocurre con la transacción abierta (BEGIN IMMEDIATE).
+    assert observado == {tabla: True for tabla in ("sessions", "profile", "rm_history", "series")}
+    assert connection.in_transaction is False  # todo confirmado con COMMIT
+
+
+def test_migracion_en_memoria_no_tiene_respaldo():
+    connection = db.connect(":memory:")
+    connection.executescript(_SCHEMA_V1)
+    connection.execute("PRAGMA user_version = 1")
+    connection.execute(
+        "INSERT INTO sessions (started_at, ended_at) VALUES ('2026-10-16T23:30:00', NULL)"
+    )
+    connection.commit()
+    try:
+        db.init_schema(connection)
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert _filas(connection, "SELECT started_at, ended_at FROM sessions") == [
+            ("2026-10-17T02:30:00", None)
+        ]
+    finally:
+        connection.close()
+
+
+def test_base_nueva_v0_nace_en_v2_sin_respaldo(tmp_path):
+    base = tmp_path / "nueva.db"
+    connection = db.connect(base)
+    try:
+        db.init_schema(connection)
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert not base.with_name(base.name + ".bak-v1").exists()  # CL-11
+    finally:
+        connection.close()
+
+
+def test_flujo_real_tras_migrar(base_v1):
+    connection, base = base_v1
+    db.init_schema(connection)
+    # La sesión abierta de v1 quedó en UTC y el flujo completo funciona sobre ella.
+    assert commands.cmd_hoy(connection, ["clean", "80-85x1"]) == "80-85% × 1 → 96-102 kg"
+    assert (
+        commands.cmd_log(connection, ["clean", "98x1"])
+        == "clean · serie 1: 98 kg × 1 (plan 96-102 kg × 1)"
+    )
+    fin = commands.cmd_fin(connection, [])
+    assert "Duración: " in fin
+    assert "plan→real: 96-102→98" in fin
+    assert db.get_open_session(connection) is None
