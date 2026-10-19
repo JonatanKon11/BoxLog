@@ -3,9 +3,11 @@
 Sin red ni token: dispatch decide y commands escribe en una BD temporal.
 """
 
+from datetime import datetime, timezone
+
 import pytest
 
-from boxlog import bot, db
+from boxlog import bot, core, db
 
 
 @pytest.fixture
@@ -120,3 +122,76 @@ def test_secuencia_como_ajeno_no_deja_nada_en_la_base(conn):
     assert all(texto is None for texto in textos.values())  # silencio total
     for tabla in ("profile", "rm_history", "sessions", "plan_items", "series"):
         assert conn.execute(f"SELECT COUNT(*) FROM {tabla}").fetchone()[0] == 0, tabla
+
+
+def test_ciclo_con_rango_reps_y_hora_local_punta_a_punta(conn, monkeypatch):
+    """Ciclo v0.2 (T7): plan mixto con "80-85x1", reales distintos del plan y hora local.
+
+    El reloj queda fijado en 2026-10-16T23:35Z: la base guarda esa marca UTC y
+    /inicio debe mostrar las 20:35, la hora local (UTC-3, RF-02/CL-12).
+    """
+    reloj = {"ahora": datetime(2026, 10, 16, 23, 35, tzinfo=timezone.utc)}
+    monkeypatch.setattr(core, "utc_now", lambda: reloj["ahora"])
+    monkeypatch.setattr(
+        db, "_now", lambda: reloj["ahora"].replace(tzinfo=None).isoformat(timespec="seconds")
+    )
+
+    def send(command, *args):
+        return bot.dispatch(1, 1, command, list(args), conn)
+
+    assert send("perfil", "78", "175") == "Perfil guardado: 78 kg · 175 cm"
+    assert send("rm", "clean", "80") == "RM de clean guardado: 80 kg"
+    # La marca guardada es 23:35 UTC; el mensaje muestra la hora local.
+    assert send("inicio") == "Sesión iniciada a las 20:35"
+    assert (
+        send("hoy", "clean", "70", "65x3", "80-85", "80-85x1")
+        == "70% → 56 kg\n65% × 3 → 52 kg\n80-85% → 64-68 kg\n80-85% × 1 → 64-68 kg"
+    )
+    # Reales (y reps) distintos del plan: el plan avanza igual, sin avisos (RF-04).
+    assert send("log", "clean", "57x4") == "clean · serie 1: 57 kg × 4 (plan 56)"
+    assert send("log", "clean", "55x2") == "clean · serie 2: 55 kg × 2 (plan 52 kg × 3)"
+    assert send("log", "clean", "67x1") == "clean · serie 3: 67 kg × 1 (plan 64-68)"
+    assert send("log", "clean", "66x1") == "clean · serie 4: 66 kg × 1 (plan 64-68 kg × 1)"
+    # /deshacer libera el ítem con rango y reps, que se reutiliza (RF-07).
+    assert send("deshacer") == "Borrada: clean 66x1"
+    assert send("log", "clean", "66x2") == "clean · serie 4: 66 kg × 2 (plan 64-68 kg × 1)"
+
+    reloj["ahora"] = datetime(2026, 10, 17, 0, 20, tzinfo=timezone.utc)  # 45 min después
+    fin = send("fin")
+    assert fin == (
+        "Duración: 45 min\n"
+        "clean: 4 series · 9 repeticiones · volumen 537 kg · máx 67 kg\n"
+        "  plan→real: 56→57, 52→55, 64-68→67, 64-68→66\n"
+        "Volumen total: 537 kg"
+    )
+    assert "64-68→66" in fin  # el par del rango con reps (RF-05, A-1)
+
+    # Estado final en la base: el plan quedó copiado en cada serie (A-3).
+    series = conn.execute(
+        "SELECT real_weight_kg, reps, planned_weight_kg, planned_reps, planned_max_kg"
+        " FROM series ORDER BY id"
+    ).fetchall()
+    assert [
+        (
+            s["real_weight_kg"],
+            s["reps"],
+            s["planned_weight_kg"],
+            s["planned_reps"],
+            s["planned_max_kg"],
+        )
+        for s in series
+    ] == [
+        (57.0, 4, 56.0, None, None),
+        (55.0, 2, 52.0, 3, None),
+        (67.0, 1, 64.0, None, 68.0),
+        (66.0, 2, 64.0, 1, 68.0),
+    ]
+    planes = conn.execute(
+        "SELECT weight_kg, reps, range_max_kg, consumed FROM plan_items ORDER BY position"
+    ).fetchall()
+    assert [(p["weight_kg"], p["reps"], p["range_max_kg"], p["consumed"]) for p in planes] == [
+        (56.0, None, None, 1),
+        (52.0, 3, None, 1),
+        (64.0, None, 68.0, 1),
+        (64.0, 1, 68.0, 1),
+    ]

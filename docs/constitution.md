@@ -6,3 +6,4 @@
 4. **Tests primero.** Se escriben antes que el código; no se avanza a la siguiente tarea con tests en rojo; `python -m pytest` en verde antes de cada commit.
 5. **Datos y token protegidos.** El token solo en `.env`; `data/` y `.env` en `.gitignore`; nunca subir a git ni mostrar en logs el token, `.env` o datos personales (peso, altura, RM). El bot responde únicamente a mi Telegram ID; los entrenamientos nunca se pierden: todo cambio de esquema de SQLite conserva los datos existentes.
 6. **Idioma.** Identificadores, módulos y nombres de archivo en inglés; mensajes al usuario, comentarios y documentación en español (kilos con coma decimal: 22,5).
+7. **Horas en UTC.** Las marcas de la base se guardan en UTC, en ISO sin sufijo de huso, y se muestran en hora local (UTC-3, Argentina, sin horario de verano); cualquier cambio de esquema que añada horas respeta esa convención y toda migración va con respaldo previo.

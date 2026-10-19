@@ -45,6 +45,41 @@ Además:
   ejemplo; sin sesión abierta responde `No hay sesión abierta, envía /inicio`.
 - Solo contesta a su dueño: cualquier otro ID de Telegram se ignora sin responder.
 
+## Novedades de v0.2: modelo de plan y zona horaria
+
+`/hoy` acepta cuatro tipos de entrada, mezclables en el mismo mensaje; cada una define un
+ítem del plan que `/log` consume en orden:
+
+| Entrada | Significado | Respuesta |
+| --- | --- | --- |
+| `70` | 70 % del RM | `70% → 84 kg` |
+| `65x3` | 65 % del RM, 3 repeticiones | `65% × 3 → 52 kg` |
+| `80-85` | rango de 80 a 85 % del RM | `80-85% → 64-68 kg` |
+| `80-85x1` | rango con repeticiones | `80-85% × 1 → 64-68 kg` |
+
+- Ejemplos: `/hoy clean 70` · `/hoy clean 65x3` · `/hoy clean 80-85` ·
+  `/hoy clean 80-85x1` · mezclado: `/hoy clean 70 65x3 80-85 80-85x1`.
+- La confirmación de `/log` muestra el plan que consumió, con el signo × en todo:
+  `/log clean 66x1` → `clean · serie 1: 66 kg × 1 (plan 64-68 kg × 1)`; y el resumen de
+  `/fin` empareja plan y real, rango incluido: `plan→real: 64-68→66`.
+- Los kilos o las reps reales distintos del plan se registran sin aviso: manda lo que
+  escribes.
+- Se aceptan también en-dash (`80–85x1`) y `X` mayúscula (`65X3`); el primer error de
+  izquierda a derecha se responde con el motivo y un ejemplo, sin tocar la base.
+
+**Zona horaria.** Hora fija de Argentina, UTC-3 (sin horario de verano). La base guarda
+siempre UTC y los mensajes muestran hora local; "hoy" se decide en hora local, así que
+una sesión que empieza a las 22:00 sigue apareciendo como de hoy.
+
+**Migración automática.** Al arrancar, `init_schema` mira `PRAGMA user_version`: una base
+de la v0.1 (versión 1) se migra sola a la 2. Primero crea la copia de seguridad
+`data/boxlog.db.bak-v1` (si ya existe, no se vuelve a crear ni se sobrescribe); después,
+dentro de una transacción, añade las columnas de plan (`reps`, `range_max_kg`,
+`planned_reps`, `planned_max_kg`) y convierte todas las marcas existentes a UTC sumando
+3 horas. Si algo falla se deshace todo y la base queda como estaba, con el respaldo
+disponible. Una carpeta sin datos nace directamente en la versión 2, sin copia.
+(Decisión de cierre: migrar con el bot apagado y con una copia manual previa propia.)
+
 ## Instalación y arranque (Windows)
 
 1. **Clona el repo y crea el entorno virtual** (desde la raíz del proyecto):
@@ -102,7 +137,7 @@ boxlog/
   commands.py  # orquestación: valida con core, guarda con db y devuelve la respuesta
   bot.py       # cableado con Telegram: .env, filtro por dueño y despacho a commands
 tests/         # tests de cada capa + test de punta a punta (test_e2e.py)
-specs/         # especificaciones vivas de cada funcionalidad (001-strength-logging/)
+specs/         # especificaciones vivas de cada funcionalidad (001-strength-logging/, 002-plan-model-and-timezone/)
 docs/          # constitution.md: reglas del proyecto
 data/          # base de datos SQLite (en .gitignore)
 .env           # token y ID (en .gitignore; plantilla en .env.example)
@@ -125,9 +160,10 @@ arriba).
 
 ## Roadmap
 
-- **v0.2** — WOD (tipo, cap, tiempo real) y calorías como estimación.
-- **v0.3** — Registro por audio.
-- **v0.4** — Análisis de datos de Garmin.
+- **v0.2 (hecha, spec 002)** — modelo de plan (reps y rangos de porcentaje) y zona horaria UTC-3.
+- **v0.3** — WOD (tipo, cap, tiempo real) y calorías como estimación.
+- **v0.4** — Registro por audio.
+- **v0.5** — Análisis de datos de Garmin.
 
 ## Nota
 
