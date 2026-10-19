@@ -1,9 +1,10 @@
 # MEMORY.md — BoxLog
 
 ## Estado actual
-- Fase: **002-plan-model-and-timezone COMPLETA** en la rama **spec-002** (los commits los hace el usuario). Tareas T1–T7 hechas; 361 tests en verde. Spec 001 cerrada (T1–T12); hay `.env` real local (ignorado por git) y los tests de config lo parchean con la fixture `sin_dotenv`.
+- Fase: **003-ux-menu-mensaje-suelto-historial** en la rama **spec-003**, partiendo de v0.2. Spec 003 escrita (solo `spec.md`; quedan `plan.md` y `tasks.md` antes de codificar). 002 completa (T1–T7) y 001 cerrada (T1–T12); 361 tests en verde; hay `.env` real local (ignorado por git) y los tests de config lo parchean con la fixture `sin_dotenv`.
 - ⚠️ **La base real (`data/boxlog.db`) sigue en v1: se migra en el paso manual del usuario** — bot apagado → copia manual `data/boxlog.manual-backup.db` → arranque con el código nuevo (eso migra) → verificación de solo lectura. El ensayo sobre la copia (`data/boxlog.ensayo.db`, ya borrable) salió perfecto: 27 marcas +3 h exactas, 18 series con planned_* NULL, respaldo `.bak-v1` en v1 con los datos originales y la real intacta (mismo sha256).
 - v0.2: modelo de plan (reps y rangos de porcentaje), todas las marcas en UTC (hora local UTC-3 fija, sin zoneinfo) y migración 1→2 con respaldo. Decisiones A-1 a A-5 ya resueltas en spec.md/plan.md de la 002.
+- **003 (UX) decidida con el usuario antes de escribir la spec** (por eso sin notación A-x): menú = constante única compartida con /ayuda (10 comandos, descripciones ≤25 chars); mensaje suelto = un único token "pesoxreps" con la mecánica de /log sobre la última serie de la sesión abierta (sin series → aviso, sin adivinar por el plan); /historial = sesión abierta + últimas 5 cerradas, solo lectura, tope de 3800 chars sin partir mensajes; error interno → aviso genérico en chat y detalle solo en log (red/timeout solo log); botones inline → spec 003b posterior ("↩️ Deshacer" con id de serie y "📋 Ver plan"; decidido: sin botón de cerrar sesión).
 - Nombre provisional: BoxLog. Destino: GitHub como portfolio.
 - Uso inicial: solo yo; si funciona, se comparte.
 
@@ -43,5 +44,6 @@
 - T7 de la 002: el ensayo sobre una copia de la base real confirma lo que los tests ya cubrían (27 marcas +3 h, planned_* NULL, respaldo íntegro) y añade dos lecciones: una base real antigua no tiene sesiones abiertas, así que el ciclo de prueba necesita `/inicio` antes de `/hoy`; y conviene hashear la base real antes y después del ensayo para demostrar que no se tocó (copy2 no modifica el origen, pero el hash lo prueba). El volumen del resumen de /fin hay que calcularlo bien en los tests: 57×4 + 55×2 + 67 + 66×2 = 537, no 437.
 
 ## Próximos pasos
-1. Cierre de la 002 por el usuario: paso manual con el bot apagado (copia `data/boxlog.manual-backup.db` → arranque que migra la base real → verificación de solo lectura) y commits de la rama spec-002; nunca subir `.env` ni `data/`.
-2. Después, la spec que el usuario abra (quedaron para la 003: menú con botones, historial de /hoy y dashboard).
+1. 003: escribir `plan.md` y `tasks.md` (una tarea por turno, tests primero) → menú, mensaje suelto, /historial y aviso de error; al cerrar, actualizar README (roadmap: v0.3 = UX).
+2. Pendiente del usuario: el paso manual de la 002 (migrar la base real con el bot apagado) y los commits de spec-002/spec-003; nunca subir `.env` ni `data/`.
+3. 003b (futura): botones inline "↩️ Deshacer" (con id de serie) y "📋 Ver plan"; decidido: sin botón de cerrar sesión.
