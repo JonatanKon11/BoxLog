@@ -171,6 +171,18 @@ def validate_percentages(pcts: list[float]) -> str | None:
 _PLAN_TOKEN_RE = re.compile(r"^(\d+(?:[.,]\d+)?)(?:-(\d+(?:[.,]\d+)?))?(?:x(\d+))?$")
 
 
+def is_plan_token(text: str) -> bool:
+    """¿El texto es un valor que el plan de /hoy reconoce? (RF-03, CL-15, CL-18)
+
+    Lo usa cmd_hoy como `is_number` de split_exercise_and_numbers para separar
+    el nombre del ejercicio de los valores "70", "65x3", "80-85" y "80-85x1"
+    (con en-dash "–" o "X" en mayúscula, que se normalizan). Un token que no
+    casa se queda en el nombre; uno que casa pero no valida lo rechaza
+    parse_plan_entries con su motivo y ejemplo.
+    """
+    return bool(_PLAN_TOKEN_RE.match(text.replace("–", "-").replace("X", "x")))
+
+
 class PlanEntry(NamedTuple):
     """Una entrada del plan de /hoy: porcentaje (o rango) y repeticiones opcionales (RF-03)."""
 
@@ -346,14 +358,18 @@ def is_today(mark: datetime, now: datetime) -> bool:
 
 
 def format_start_time(started_at: str, now: datetime) -> str:
-    """Hora legible de apertura de sesión (RF-03).
+    """Hora legible de apertura de sesión (RF-02, RF-03).
 
     'las 20:35' si empezó hoy; 'el 09/10 a las 20:35' si empezó otro día.
-    started_at es la marca ISO de la base de datos; now permite testear.
+    started_at es una marca UTC de la base (sin huso = UTC, core._as_utc): se
+    muestra en hora local (UTC-3) y "hoy" se decide comparando el día en local
+    (CL-12: 01:00 UTC = 22:00 del día anterior sigue siendo hoy). now es la
+    hora actual en UTC (naive o consciente) y permite testear.
     """
-    start = datetime.fromisoformat(started_at)
+    mark = datetime.fromisoformat(started_at)
+    start = to_local(mark)
     hora = f"{start:%H:%M}"
-    if start.date() == now.date():
+    if is_today(mark, now):
         return f"las {hora}"
     return f"el {start:%d/%m} a las {hora}"
 
@@ -410,10 +426,19 @@ def build_summary(start: datetime, end: datetime, series: list[dict]) -> str:
 
 
 def format_log_confirmation(
-    exercise: str, n: int, weight: float, reps: int, planned: float | None
+    exercise: str,
+    n: int,
+    weight: float,
+    reps: int,
+    planned: float | None,
+    planned_max_kg: float | None = None,
+    planned_reps: int | None = None,
 ) -> str:
-    """Confirmación de /log (RF-06): '<ejercicio> · serie N: <peso> kg × <reps>'."""
+    """Confirmación de /log (RF-06, RF-04): '<ejercicio> · serie N: <peso> kg × <reps>'.
+
+    El sufijo del plan lo arma format_plan_suffix con los valores copiados en la
+    serie (A-3): " (plan 84)" como en la 001, " (plan 65 kg × 3)" con reps y
+    " (plan 64-68 kg × 1)" con rango; sin plan no lleva sufijo (A-1).
+    """
     text = f"{exercise} · serie {n}: {format_kg(weight)} kg × {reps}"
-    if planned is not None:
-        text += f" (plan {format_kg(planned)})"
-    return text
+    return text + format_plan_suffix(planned, planned_max_kg, planned_reps)

@@ -20,6 +20,7 @@ from boxlog.core import (
     format_plan_suffix,
     format_start_time,
     help_text,
+    is_plan_token,
     is_today,
     normalize_exercise,
     parse_log_args,
@@ -499,17 +500,39 @@ def test_parse_plan_entries_espacios_como_en_log():
     assert "'x' va pegada, sin espacios: 65x3" == aviso
 
 
-# --- format_start_time (RF-03) ---
+# --- is_plan_token (T5: separación de /hoy con las cuatro sintaxis) ---
+
+
+def test_is_plan_token_acepta_las_cuatro_sintaxis():
+    # Los tokens que cmd_hoy le pasa al splitter (RF-03, CL-15, CL-18).
+    for token in ("70", "77,5", "65x3", "65X3", "80-85", "80-85x1", "80–85", "80–85x1"):
+        assert is_plan_token(token) is True, token
+
+
+def test_is_plan_token_rechaza_lo_que_no_es_plan():
+    # "-5" y "80-" no son valores: el comando los manda al parser (CL-14) o al nombre.
+    for token in ("", "abc", "-5", "80-", "x3", "65 3", "84x5.5"):
+        assert is_plan_token(token) is False, token
+
+
+# --- format_start_time (RF-02, RF-03, CL-12) ---
 
 
 def test_format_start_time_hoy_sin_fecha():
+    # La marca de la base es UTC (RF-02): 23:35 UTC = 20:35 hora local (RF-03).
     ahora = datetime(2026, 10, 10, 21, 0)
-    assert format_start_time("2026-10-10T20:35:00", ahora) == "las 20:35"
+    assert format_start_time("2026-10-10T23:35:00", ahora) == "las 20:35"
 
 
 def test_format_start_time_otro_dia_con_fecha():
     ahora = datetime(2026, 10, 10, 9, 0)
-    assert format_start_time("2026-10-09T20:35:00", ahora) == "el 09/10 a las 20:35"
+    assert format_start_time("2026-10-09T23:35:00", ahora) == "el 09/10 a las 20:35"
+
+
+def test_format_start_time_cerca_de_medianoche_utc_sigue_siendo_hoy():
+    # CL-12: sesión a las 22:00 locales (01:00 UTC del día siguiente) es "hoy".
+    ahora = datetime(2026, 10, 11, 1, 30)  # 01:30 UTC = 22:30 locales del 10/10
+    assert format_start_time("2026-10-11T01:00:00", ahora) == "las 22:00"
 
 
 # --- build_summary (RF-04, CL-5) ---
@@ -592,6 +615,18 @@ def test_format_log_confirmation_peso_con_coma_decimal():
     assert (
         format_log_confirmation("front", 1, 42.5, 3, None)
         == "front · serie 1: 42,5 kg × 3"
+    )
+
+
+def test_format_log_confirmation_con_rango_y_reps_del_plan():
+    # RF-04, A-1: el sufijo del plan lleva rango y reps cuando la serie los trae.
+    assert (
+        format_log_confirmation("clean", 1, 82.0, 1, 64.0, 68.0, 1)
+        == "clean · serie 1: 82 kg × 1 (plan 64-68 kg × 1)"
+    )
+    assert (
+        format_log_confirmation("clean", 1, 66.0, 3, 65.0, None, 3)
+        == "clean · serie 1: 66 kg × 3 (plan 65 kg × 3)"
     )
 
 
