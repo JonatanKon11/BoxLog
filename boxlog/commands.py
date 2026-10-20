@@ -94,6 +94,24 @@ def cmd_log(connection, args: list[str]) -> str:
     )
 
 
+def cmd_free_text(connection, args: list[str]) -> str:
+    """Registro suelto (RF-02): un único token con forma de <peso>x<repeticiones>.
+
+    Usa el ejercicio de la última serie de la sesión abierta (la que borraría
+    /deshacer) y delega en cmd_log: misma validación, misma confirmación y
+    mismo plan que /log (RF-06). Texto libre o con varios tokens → ayuda (RF-12).
+    """
+    if len(args) != 1 or not core.is_log_token(args[0]):
+        return core.help_text()
+    abierta = db.get_open_session(connection)
+    if abierta is None:
+        return core.NO_OPEN_SESSION
+    serie = db.get_last_series(connection, abierta["id"])
+    if serie is None:
+        return core.FREE_NO_SERIES
+    return cmd_log(connection, [serie["exercise"], args[0]])
+
+
 def cmd_deshacer(connection, args: list[str]) -> str:
     """/deshacer (RF-07): borra la última serie de la sesión y libera su plan."""
     if args:

@@ -93,6 +93,32 @@ def parse_log_args(args: list[str]) -> tuple[str, float, int] | None:
     return exercise, weight, int(reps)
 
 
+# Forma de <peso>x<repeticiones> para el registro suelto (RF-02, spec 003).
+# Forma estricta: dos números (coma o punto; "-" permitido en el peso) y una "x"/"X".
+_LOG_SHAPE_RE = re.compile(r"^-?[0-9]+([.,][0-9]+)?[xX][0-9]*([.,][0-9]+)?$")
+# Sin peso ("x3"): también es un intento de registro; /log lo rechaza con su aviso.
+_LOG_SIN_PESO_RE = re.compile(r"^[xX][0-9]*([.,][0-9]+)?$")
+# Casi forma con letras ("1e3x5"): notación científica; /log la rechaza con su aviso.
+_LOG_CASI_RE = re.compile(r"^[0-9A-Za-z.,]+[xX][0-9A-Za-z.,]+$")
+
+
+def is_log_token(texto: str) -> bool:
+    """¿Tiene el texto forma de <peso>x<repeticiones> para el registro suelto (RF-02)?
+
+    True si es la forma estricta de dos números, si le falta el peso ("x3") o si
+    intenta serlo con letras ("1e3x5"): esos casos los rechaza la validación de
+    /log con su aviso de uso (RF-09), no son texto libre. El resto ("52x3?",
+    "52x3.", "52 3") no tiene forma de registro y va a la ayuda (RF-12 modificado).
+    """
+    if _LOG_SHAPE_RE.match(texto) or _LOG_SIN_PESO_RE.match(texto):
+        return True
+    # la letra debe estar fuera de la separadora: "52x3." no es casi-numérico
+    return bool(
+        _LOG_CASI_RE.match(texto)
+        and any(c.isalpha() and c not in "xX" for c in texto)
+    )
+
+
 def format_kg(value: float) -> str:
     """Formatea kilos con coma decimal: 22.5 -> '22,5', 84.0 -> '84'."""
     return f"{value:g}".replace(".", ",")
@@ -113,6 +139,10 @@ _USAGE_EXAMPLES = {
 
 NO_OPEN_SESSION = "No hay sesión abierta, envía /inicio"
 NO_SERIES = "No hay series en esta sesión"
+FREE_NO_SERIES = (
+    "Aún no hay series en esta sesión. Registra una con "
+    "/log <ejercicio> <peso>x<reps>"
+)
 
 # Menú del chat y /ayuda salen de esta única constante (RF-01, spec 003).
 # Cada descripción va en español y con 25 caracteres o menos, el límite del menú.

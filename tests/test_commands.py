@@ -852,6 +852,126 @@ def test_deshacer_restaura_el_item_con_reps_y_rango(conn):
     )
 
 
+# --- registro suelto desde mensaje sin comando (RF-02, spec 003) ---
+
+
+def _conexion_con_serie_previa(tmp_path, nombre):
+    """Base distinta por test, para comparar /log contra el registro suelto."""
+    connection = db.connect(tmp_path / nombre)
+    db.init_schema(connection)
+    commands.cmd_inicio(connection, [])
+    commands.cmd_log(connection, ["clean", "84x5"])
+    return connection
+
+
+def test_suelto_da_exactamente_lo_que_daria_log(tmp_path):
+    con_log = _conexion_con_serie_previa(tmp_path, "via-log.db")
+    texto_log = commands.cmd_log(con_log, ["clean", "52x3"])
+    con_suelto = _conexion_con_serie_previa(tmp_path, "via-suelto.db")
+    texto_suelto = commands.cmd_free_text(con_suelto, ["52x3"])
+    assert texto_suelto == texto_log == "clean · serie 2: 52 kg × 3"
+    # misma serie persistida, con su copia del plan (NULL en este caso)
+    assert db.get_last_series(con_log, 1) == db.get_last_series(con_suelto, 1)
+
+
+def test_suelto_con_sesion_y_series_previas_registra_el_ultimo_ejercicio(conn):
+    commands.cmd_inicio(conn, [])
+    commands.cmd_log(conn, ["clean", "84x5"])
+    texto = commands.cmd_free_text(conn, ["52x3"])
+    assert texto == "clean · serie 2: 52 kg × 3"
+    assert db.get_last_series(conn, 1)["exercise"] == "clean"
+
+
+def test_suelto_tras_deshacer_usa_la_serie_anterior(conn):
+    commands.cmd_inicio(conn, [])
+    commands.cmd_log(conn, ["clean", "84x5"])
+    commands.cmd_log(conn, ["back", "squat", "100x1"])
+    assert commands.cmd_deshacer(conn, []) == "Borrada: back squat 100x1"
+    texto = commands.cmd_free_text(conn, ["52x3"])
+    assert texto == "clean · serie 2: 52 kg × 3"
+    assert db.get_last_series(conn, 1)["exercise"] == "clean"
+
+
+def test_suelto_sin_sesion_abierta_aviso_cl2_sin_guardar(conn):
+    texto = commands.cmd_free_text(conn, ["52x3"])
+    assert texto == core.NO_OPEN_SESSION
+    assert conn.execute("SELECT COUNT(*) FROM series").fetchone()[0] == 0
+
+
+def test_suelto_sesion_cerrada_aviso_cl2_sin_guardar(conn):
+    commands.cmd_inicio(conn, [])
+    commands.cmd_log(conn, ["clean", "84x5"])
+    commands.cmd_fin(conn, [])
+    assert commands.cmd_free_text(conn, ["52x3"]) == core.NO_OPEN_SESSION
+    assert conn.execute("SELECT COUNT(*) FROM series").fetchone()[0] == 1  # nada nuevo
+
+
+def test_suelto_sesion_sin_series_aviso_sin_adivinar_el_plan(conn):
+    commands.cmd_inicio(conn, [])
+    commands.cmd_rm(conn, ["clean", "100"])
+    commands.cmd_hoy(conn, ["clean", "70"])  # hay plan de /hoy...
+    texto = commands.cmd_free_text(conn, ["52x3"])
+    assert texto == core.FREE_NO_SERIES  # ...pero no se adivina el ejercicio (CL-6)
+    assert conn.execute("SELECT COUNT(*) FROM series").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("token", ["52x0", "52x", "x3", "-5x3", "52x3,5", "1e3x5"])
+def test_suelto_token_invalido_aviso_de_uso_sin_guardar(conn, token):
+    commands.cmd_inicio(conn, [])
+    commands.cmd_log(conn, ["clean", "84x5"])
+    antes = conn.execute("SELECT COUNT(*) FROM series").fetchone()[0]
+    texto = commands.cmd_free_text(conn, [token])
+    assert texto == core.usage_example("log")
+    assert conn.execute("SELECT COUNT(*) FROM series").fetchone()[0] == antes
+
+
+@pytest.mark.parametrize(
+    "texto_libre",
+    ["52x3?", "52x3.", "52 3", "mañana 52x3", "52x3 52x3", "hola", ""],
+)
+def test_suelto_texto_libre_da_la_ayuda(conn, texto_libre):
+    commands.cmd_inicio(conn, [])
+    commands.cmd_log(conn, ["clean", "84x5"])
+    assert commands.cmd_free_text(conn, [texto_libre]) == core.help_text()
+
+
+def test_suelto_varios_tokens_da_la_ayuda(conn):
+    commands.cmd_inicio(conn, [])
+    assert commands.cmd_free_text(conn, ["52x3", "52x3"]) == core.help_text()
+
+
+def test_suelto_conserva_el_ejercicio_de_varias_palabras(conn):
+    commands.cmd_inicio(conn, [])
+    commands.cmd_log(conn, ["back", "squat", "100x1"])
+    texto = commands.cmd_free_text(conn, ["52x3"])
+    assert texto == "back squat · serie 2: 52 kg × 3"
+    assert db.get_last_series(conn, 1)["exercise"] == "back squat"
+
+
+def test_suelto_con_plan_en_rango_muestra_el_sufijo(conn):
+    commands.cmd_inicio(conn, [])
+    commands.cmd_rm(conn, ["clean", "80"])
+    commands.cmd_hoy(conn, ["clean", "80-85x1", "80-85x1"])
+    commands.cmd_log(conn, ["clean", "60x3"])  # consume el primer ítem
+    texto = commands.cmd_free_text(conn, ["66x3"])
+    assert texto == "clean · serie 2: 66 kg × 3 (plan 64-68 kg × 1)"
+    serie = db.get_last_series(conn, 1)
+    assert (serie["planned_weight_kg"], serie["planned_max_kg"], serie["planned_reps"]) == (
+        64.0,
+        68.0,
+        1,
+    )
+
+
+def test_suelto_peso_grande_se_registra_como_log(conn):
+    # /log (RF-06 de la 001) no tiene techo de kilos; el suelto obedece la
+    # misma validación y registra "600x3" igual que lo haría "/log clean 600x3".
+    commands.cmd_inicio(conn, [])
+    commands.cmd_log(conn, ["clean", "84x5"])
+    texto = commands.cmd_free_text(conn, ["600x3"])
+    assert texto == "clean · serie 2: 600 kg × 3"
+
+
 # --- separación de capas (constitución 3) ---
 
 

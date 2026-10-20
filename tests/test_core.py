@@ -21,6 +21,7 @@ from boxlog.core import (
     format_plan_suffix,
     format_start_time,
     help_text,
+    is_log_token,
     is_plan_token,
     is_today,
     normalize_exercise,
@@ -869,3 +870,24 @@ def test_menu_y_ayuda_comparten_comandos_y_descripciones():
 
 def test_usage_example_historial_aviso_corto_v03():
     assert usage_example("historial") == "Usa /historial (sin nada más)"
+
+
+# --- is_log_token: forma del registro suelto (RF-02, spec 003) ---
+
+
+@pytest.mark.parametrize(
+    "texto",
+    ["52x3", "52,5x3", "52.5X3", "100x1", "52x0", "52x", "x3", "-5x3", "52x3,5", "1e3x5"],
+)
+def test_is_log_token_con_forma_de_pesoxreps(texto):
+    """Tiene forma de registro: lo registra o lo rechaza /log con su aviso (RF-09)."""
+    assert is_log_token(texto) is True
+
+
+@pytest.mark.parametrize(
+    "texto",
+    ["52x3?", "52x3.", "52 3", "mañana 52x3", "52x3 52x3", "hola", ""],
+)
+def test_is_log_token_texto_libre_no_tiene_forma(texto):
+    """Sin forma de registro: va a la lista de comandos (RF-12 modificado)."""
+    assert is_log_token(texto) is False
