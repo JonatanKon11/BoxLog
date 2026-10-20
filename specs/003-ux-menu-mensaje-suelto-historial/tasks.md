@@ -1,0 +1,33 @@
+# Tareas 003 — UX del bot: menú, mensaje suelto, /historial y aviso de error (BoxLog v0.3)
+
+Ordenadas por dependencia y de menor a mayor riesgo (plan §8). Tests primero: cada tarea de código empieza por escribir sus tests y no se avanza con `python -m pytest` en rojo (spec, criterios de finalización). **PÁRATE al terminar cada tarea**: espera a la siguiente petición del usuario antes de continuar.
+
+- [ ] **T1. core: constante única del menú y /ayuda sincronizados** — RF-01, CL-15, RNF-1
+  - Tests primero: `test_sincronia_del_menu` — `COMMAND_MENU` lista los 10 comandos (perfil, rm, rms, inicio, hoy, log, deshacer, historial, fin, ayuda) en ese orden, cada descripción tiene ≤25 caracteres y `help_text()` los lista a todos con la misma descripción; además `test_core.py::test_help_text_lista_todos_los_comandos_v01` **se actualiza** (motivo RF-01: la ayuda pasa a salir de la constante y gana /historial) — único test de la 001 tocado en esta tarea.
+  - Implementar en `core.py`: la tupla `COMMAND_MENU` (comando, descripción) del plan §2 y `help_text()` construida desde ella; `_USAGE_EXAMPLES` gana `"historial": "Usa /historial (sin nada más)"`. `bot.py` sin cambios todavía: el menú se publica en T4.
+  - Hecho cuando: `python -m pytest` completo en verde y `core` sigue sin importar la librería de Telegram ni sqlite3.
+  - PÁRATE al terminar.
+
+- [ ] **T2. core + commands: token pesoxreps y registro suelto** — RF-02, RF-09 y RF-12 (modificados por 003), CL-1 a CL-8
+  - Tests primero: en `test_core.py`, la tabla de `is_log_token` ("52x3", "52,5X3", "52x0", "52x", "5x2,5", "600x3", "1e3x5" → True; "52x3?", "52x3.", "52 3" → False); en `test_commands.py`, `cmd_free_text`: sin sesión abierta → aviso de CL-2; sesión abierta sin series → el texto exacto de `FREE_NO_SERIES`, aunque haya plan de /hoy (CL-6); con series → misma confirmación y misma copia del plan que /log, con coma decimal "52,5X3" (CL-3); token inválido "52x0" → aviso de uso con motivo y ejemplo, sin guardar nada (CL-4); tras /deshacer → el siguiente suelto usa la serie que quedó como última (CL-7).
+  - Implementar en `core.py` `is_log_token` (dos regex, plan §3) y la constante `FREE_NO_SERIES`; en `commands.py`, `cmd_free_text` (forma → sesión → última serie vía `db.get_last_series` → delega en `cmd_log` con el ejercicio). `db.py` sin cambios.
+  - Hecho cuando: `python -m pytest` completo en verde y el registro suelto no duplica ninguna lógica de /log (validación, RM, plan y confirmación salen de `cmd_log`).
+  - PÁRATE al terminar.
+
+- [ ] **T3. db + commands: /historial** — RF-03, CL-9 a CL-14, RNF-1, RNF-4
+  - Tests primero: en `test_db.py`, `get_recent_sessions` devuelve la abierta primero (si la hay) y después las últimas 5 cerradas de más reciente a más antigua; en `test_commands.py`, `cmd_historial`: cabecera de cerrada "13/10 · 1 h 11 min" y cabecera de abierta "19/10 · abierta desde las 20:35" (marcas UTC fijadas por monkeypatch → horas locales, patrón de la 002), una línea por ejercicio con el formato de /fin y **sin** pares plan→real (CL-14), sin sesiones → `HISTORIAL_EMPTY` (CL-9), con argumentos → aviso de uso (CL-12), tope de 3800 caracteres reduciendo sesiones antiguas sin partir el mensaje y con la más reciente completa (CL-11).
+  - Implementar en `db.py` `get_recent_sessions` (dos SELECT, sin cambios de esquema); en `core.py` la extracción `exercise_stat_line` (misma salida que la de `build_summary`, que no cambia de texto) y las constantes `HISTORIAL_EMPTY` y `HISTORIAL_MAX_CHARS`; en `commands.py`, `cmd_historial` (bloques por sesión, tope reintentando sin la más antigua).
+  - Hecho cuando: `python -m pytest` completo en verde y los tests 001 de `build_summary` y `cmd_fin` siguen sin tocarse.
+  - PÁRATE al terminar.
+
+- [ ] **T4. bot: texto crudo, historial cableado, aviso de error y menú publicado** — RF-01, RF-02 y RF-04 (cableado), CL-8, CL-13, RNF-2, RNF-5
+  - Tests primero: en `test_bot.py`, adaptar los dos tests de la 001 listados en el plan §6 — `test_dispatch_texto_libre_devuelve_la_ayuda` pasa a cubrir el registro suelto (`["52x3"]` → confirmación de serie; `["52x3?"]` y `["mañana hago 52x3"]` → ayuda) y `test_dispatch_persona_ajena_comando_desconocido_tampoco` solo cambia su llamada por el contrato de `args`; nuevos: `dispatch` con texto crudo y sesión abierta → serie; persona ajena con `["52x3"]` → silencio sin guardar (CL-8); `/historial` cableado responde; `error_notice` → None para `NetworkError`/`TimedOut` y texto genérico para otro error (CL-13); `on_error` con update sin mensaje y con `reply_text` que lanza → no rompe, el log recibe el detalle; `publish_menu` con app falsa cuyo `set_my_commands` lanza → no propaga, se loguea el tipo de error y el bot arrancaría igual (R5).
+  - Implementar en `bot.py`: despacho con `command is None → cmd_free_text` (el handler de texto libre pasa el mensaje con `strip()` como único elemento de `args`), `COMMANDS` += `"historial"`, función pura `error_notice`, `on_error` con aviso genérico solo si no es de red (log siempre, con el token redactado) y `publish_menu` vía `post_init` con `try/except` (log fijo con `type(exc).__name__`, sin `str(exc)`).
+  - Hecho cuando: `python -m pytest` completo en verde; el chat nunca ve `str(error)` ni traceback; un fallo de `set_my_commands` no impide que el bot arranque.
+  - PÁRATE al terminar.
+
+- [ ] **T5. cierre: e2e del mensaje suelto, docs y ensayo manual** — todos los RF/CL (cierre), CL-3, CL-7
+  - Tests primero: e2e punta a punta en `test_e2e.py` (junto al ciclo de la 001) — sesión abierta, /hoy con plan, "52,5X3" suelto → confirma con coma decimal y copia del plan; /deshacer y otro suelto → usa el ejercicio anterior (CL-7); "52x0" → aviso de uso; "52x3?" → ayuda; sin sesión abierta → aviso de CL-2; y /historial de la misma sesión tras cerrarla.
+  - Implementar: el e2e; README con "Novedades de v0.3" (menú de comandos, mensaje suelto, /historial, aviso de error interno) y roadmap actualizado (v0.3 = UX; WOD/calorías quedan recorridos); `MEMORY.md` actualizado; en la respuesta final, el **ensayo manual indicado para el usuario** con el bot real: "52x3" suelto, menú visible al escribir "/", /historial y un error simulado → aviso genérico en el chat con el detalle en el log.
+  - Hecho cuando: `python -m pytest` completo en verde; README y MEMORY actualizados; sin token ni datos personales en el diff; sin dependencias nuevas ni cambios de esquema.
+  - PÁRATE al terminar.
