@@ -107,26 +107,34 @@ _USAGE_EXAMPLES = {
     "fin": "Usa /fin (sin nada más)",
     "rms": "Usa /rms (sin nada más)",
     "deshacer": "Usa /deshacer (sin nada más)",
+    "historial": "Usa /historial (sin nada más)",
 }
 
 
 NO_OPEN_SESSION = "No hay sesión abierta, envía /inicio"
 NO_SERIES = "No hay series en esta sesión"
 
+# Menú del chat y /ayuda salen de esta única constante (RF-01, spec 003).
+# Cada descripción va en español y con 25 caracteres o menos, el límite del menú.
+COMMAND_MENU: tuple[tuple[str, str], ...] = (
+    ("perfil", "Peso (kg) y altura (cm)"),
+    ("rm", "RM en kg de un ejercicio"),
+    ("rms", "Lista los RM vigentes"),
+    ("inicio", "Abre la sesión de entreno"),
+    ("hoy", "Kilos por % de tu RM"),
+    ("log", "Serie: peso kg x reps"),
+    ("deshacer", "Borra la última serie"),
+    ("historial", "Últimas sesiones"),
+    ("fin", "Cierra y resume la sesión"),
+    ("ayuda", "Lista de comandos"),
+)
+
 
 def help_text() -> str:
-    """Lista de comandos disponibles (RF-12)."""
-    return (
-        "Comandos disponibles:\n"
-        "/perfil <peso> <altura> — guarda tu peso (kg) y altura (cm)\n"
-        "/rm <ejercicio> <kg> — guarda el RM de un ejercicio\n"
-        "/rms — lista los RM vigentes\n"
-        "/inicio — abre la sesión\n"
-        "/fin — cierra la sesión y muestra el resumen\n"
-        "/hoy <ejercicio> <porcentajes...> — kilos por porcentaje de RM\n"
-        "/log <ejercicio> <peso>x<repeticiones> — registra una serie\n"
-        "/deshacer — borra la última serie"
-    )
+    """Lista de comandos disponibles (RF-12), idéntica al menú del chat (RF-01)."""
+    lineas = ["Comandos disponibles:"]
+    lineas += [f"/{nombre} — {descripcion}" for nombre, descripcion in COMMAND_MENU]
+    return "\n".join(lineas)
 
 
 def usage_example(command: str) -> str:

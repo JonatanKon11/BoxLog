@@ -1,7 +1,7 @@
 # MEMORY.md — BoxLog
 
 ## Estado actual
-- Fase: **003-ux-menu-mensaje-suelto-historial** en la rama **spec-003**, partiendo de v0.2 (**002 cerrada y etiquetada v0.2 en main**; el usuario ya migró y probó la base real en Telegram). Spec 003 completa: `spec.md`, `plan.md` y `tasks.md`; quedan T1–T5 (una por turno, tests primero). 361 tests en verde; hay `.env` real local (ignorado por git) y los tests de config lo parchean con la fixture `sin_dotenv`.
+- Fase: **003-ux-menu-mensaje-suelto-historial** en la rama **spec-003**, partiendo de v0.2 (**002 cerrada y etiquetada v0.2 en main**; el usuario ya migró y probó la base real en Telegram). **T1 hecha** (COMMAND_MENU + /ayuda sincronizados, 365 tests en verde); quedan T2–T5 (una por turno, tests primero). Hay `.env` real local (ignorado por git) y los tests de config lo parchean con la fixture `sin_dotenv`.
 - v0.2 en la base real: migrada a v2 con respaldo `.bak-v1` y verificada en Telegram (horas +3 h, plan con reps y rangos). `data/boxlog.ensayo.db` y su respaldo del ensayo ya son borrables.
 - v0.2: modelo de plan (reps y rangos de porcentaje), todas las marcas en UTC (hora local UTC-3 fija, sin zoneinfo) y migración 1→2 con respaldo. Decisiones A-1 a A-5 ya resueltas en spec.md/plan.md de la 002.
 - **003 (UX) decidida con el usuario antes de escribir la spec** (por eso sin notación A-x): menú = constante única compartida con /ayuda (10 comandos, descripciones ≤25 chars); mensaje suelto = un único token "pesoxreps" con la mecánica de /log sobre la última serie de la sesión abierta (sin series → aviso, sin adivinar por el plan); /historial = sesión abierta + últimas 5 cerradas, solo lectura, tope de 3800 chars sin partir mensajes; error interno → aviso genérico en chat y detalle solo en log (red/timeout solo log); botones inline → spec 003b posterior ("↩️ Deshacer" con id de serie y "📋 Ver plan"; decidido: sin botón de cerrar sesión).
@@ -27,7 +27,7 @@
 ## Aprendizajes y errores a evitar
 - `round()` de Python redondea al par (banker's rounding): para el redondeo a 0,5 kg con mitades hacia arriba usar `math.floor(x * 2 + 0.5) / 2` (RF-05).
 - `PRAGMA user_version` no admite parámetros (`?`); fijarlo con `PRAGMA user_version = 1` solo cuando está en 0, para no pisar migraciones futuras.
-- El test de "sin Telegram" lee el código fuente en minúsculas: los docstrings no deben mencionar la palabra "telegram" (rompieron el test de commands.py).
+- El test de "sin Telegram" lee **toda** la fuente de `core.py` en minúsculas: ni docstrings ni comentarios deben mencionar la palabra "telegram" (rompieron el test de commands.py y otra vez el comentario de COMMAND_MENU en T1 de la 003; decir "el límite del menú").
 - Regla de seguridad del proyecto: todo DELETE en SQLite filtra por `session_id` + `exercise` o por `series.id`; el `ON DELETE SET NULL` de `plan_items` deja `planned_weight_kg` intacto, por lo que /deshacer no pierde el peso planificado aunque se repita /hoy.
 - `float()` de Python acepta `nan`, `inf` y notación científica (`1e3`): validar antes con regex de solo decimal simple (RF-09). Las repeticiones de /log se devuelven como `int` y la separadora `x`/`X` se normaliza antes de partir.
 - Evitar: token en el código o en git, datos personales en el repo, lógica de negocio dentro de los handlers.
@@ -44,6 +44,6 @@
 - T7 de la 002: el ensayo sobre una copia de la base real confirma lo que los tests ya cubrían (27 marcas +3 h, planned_* NULL, respaldo íntegro) y añade dos lecciones: una base real antigua no tiene sesiones abiertas, así que el ciclo de prueba necesita `/inicio` antes de `/hoy`; y conviene hashear la base real antes y después del ensayo para demostrar que no se tocó (copy2 no modifica el origen, pero el hash lo prueba). El volumen del resumen de /fin hay que calcularlo bien en los tests: 57×4 + 55×2 + 67 + 66×2 = 537, no 437.
 
 ## Próximos pasos
-1. 003: implementar T1–T5 de `tasks.md` (una tarea por turno, tests primero, `python -m pytest` completo y PÁRATE al terminar cada una); al cerrar, README con v0.3 y etiqueta v0.3 en main (la pone el usuario).
+1. 003: implementar T2–T5 de `tasks.md` (una tarea por turno, tests primero, `python -m pytest` completo y PÁRATE al terminar cada una); al cerrar, README con v0.3 y etiqueta v0.3 en main (la pone el usuario).
 2. Commits de la rama spec-003 por el usuario; nunca subir `.env` ni `data/`.
 3. 003b (futura): botones inline "↩️ Deshacer" (con id de serie) y "📋 Ver plan"; decidido: sin botón de cerrar sesión.

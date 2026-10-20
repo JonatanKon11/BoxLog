@@ -2,10 +2,11 @@
 
 Ordenadas por dependencia y de menor a mayor riesgo (plan §8). Tests primero: cada tarea de código empieza por escribir sus tests y no se avanza con `python -m pytest` en rojo (spec, criterios de finalización). **PÁRATE al terminar cada tarea**: espera a la siguiente petición del usuario antes de continuar.
 
-- [ ] **T1. core: constante única del menú y /ayuda sincronizados** — RF-01, CL-15, RNF-1
+- [x] **T1. core: constante única del menú y /ayuda sincronizados** — RF-01, CL-15, RNF-1
+  - Ajuste: el comentario de `COMMAND_MENU` no puede mencionar la palabra "telegram" — el test de la 001 (`test_core_no_importa_telegram_ni_sqlite`) lee **toda** la fuente de `core.py` en minúsculas, no solo los imports —; se dice "el límite del menú". Ayuda y menú quedan con el mismo texto, separado con "—" y una línea por comando (cabecera + 10 líneas).
   - Tests primero: `test_sincronia_del_menu` — `COMMAND_MENU` lista los 10 comandos (perfil, rm, rms, inicio, hoy, log, deshacer, historial, fin, ayuda) en ese orden, cada descripción tiene ≤25 caracteres y `help_text()` los lista a todos con la misma descripción; además `test_core.py::test_help_text_lista_todos_los_comandos_v01` **se actualiza** (motivo RF-01: la ayuda pasa a salir de la constante y gana /historial) — único test de la 001 tocado en esta tarea.
   - Implementar en `core.py`: la tupla `COMMAND_MENU` (comando, descripción) del plan §2 y `help_text()` construida desde ella; `_USAGE_EXAMPLES` gana `"historial": "Usa /historial (sin nada más)"`. `bot.py` sin cambios todavía: el menú se publica en T4.
-  - Hecho cuando: `python -m pytest` completo en verde y `core` sigue sin importar la librería de Telegram ni sqlite3.
+  - Hecho cuando: `python -m pytest` completo en verde y `core` sigue sin importar la librería de Telegram ni sqlite3. ✔ 365 tests en verde (361 + 4 nuevos).
   - PÁRATE al terminar.
 
 - [ ] **T2. core + commands: token pesoxreps y registro suelto** — RF-02, RF-09 y RF-12 (modificados por 003), CL-1 a CL-8

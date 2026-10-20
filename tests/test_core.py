@@ -11,6 +11,7 @@ from boxlog.core import (
     PlanEntry,
     PlannedSet,
     build_summary,
+    COMMAND_MENU,
     convert_percentages,
     convert_plan_entries,
     format_duration,
@@ -826,5 +827,45 @@ def test_help_text_lista_todos_los_comandos_v01():
         "/hoy",
         "/log",
         "/deshacer",
+        "/historial",  # 003 (RF-01): la ayuda gana /historial con el menú único
     ):
         assert comando in texto
+
+
+# --- COMMAND_MENU y sincronización con /ayuda (RF-01, spec 003) ---
+
+
+def test_menu_del_bot_es_los_diez_comandos_v03():
+    comandos = [nombre for nombre, _ in COMMAND_MENU]
+    assert comandos == [
+        "perfil",
+        "rm",
+        "rms",
+        "inicio",
+        "hoy",
+        "log",
+        "deshacer",
+        "historial",
+        "fin",
+        "ayuda",
+    ]
+    assert len(set(comandos)) == len(comandos)  # sin duplicados
+
+
+def test_menu_del_bot_descripciones_no_vacias_y_max_25_caracteres():
+    for nombre, descripcion in COMMAND_MENU:
+        assert descripcion, nombre  # no vacía
+        assert descripcion == descripcion.strip(), nombre  # sin espacios sueltos
+        assert len(descripcion) <= 25, nombre  # límite de Telegram (RF-01)
+
+
+def test_menu_y_ayuda_comparten_comandos_y_descripciones():
+    texto = help_text()
+    assert texto.startswith("Comandos disponibles:")
+    for nombre, descripcion in COMMAND_MENU:
+        assert f"/{nombre} — {descripcion}" in texto  # mismo texto en los dos sitios
+    assert texto.count("\n") == len(COMMAND_MENU)  # cabecera + una línea por comando
+
+
+def test_usage_example_historial_aviso_corto_v03():
+    assert usage_example("historial") == "Usa /historial (sin nada más)"
