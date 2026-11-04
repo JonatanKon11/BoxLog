@@ -145,6 +145,10 @@ FREE_NO_SERIES = (
 )
 HISTORIAL_EMPTY = "Aún no hay sesiones. Abre la primera con /inicio"
 
+# Aviso fijo de error interno para el chat (RF-04, spec 003): siempre igual,
+# sin detalle del error ni del token; el detalle solo va al log.
+INTERNAL_ERROR_TEXT = "⚠️ Algo salió mal; no se ha perdido nada. Inténtalo de nuevo."
+
 # Tope de caracteres de /historial: se descartan sesiones cerradas antiguas
 # hasta caber en un solo mensaje; nunca se parte por la mitad (RF-03, CL-11).
 HISTORIAL_MAX_CHARS = 3800

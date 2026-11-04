@@ -1,7 +1,9 @@
 """Tests de bot.py: dueño, despacho y configuración, sin red ni token real."""
 
+import asyncio
 import ast
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from telegram.error import NetworkError, TimedOut
@@ -59,15 +61,24 @@ def test_dispatch_persona_ajena_no_responde(conn):
 
 
 def test_dispatch_persona_ajena_comando_desconocido_tampoco(conn):
-    assert bot.dispatch(999, 1, None, [], conn) is None
+    # T4: solo cambia la llamada al contrato nuevo de args (texto crudo en su
+    # único elemento); la aserción de silencio (RF-08) queda igual.
+    assert bot.dispatch(999, 1, None, ["52x3"], conn) is None
 
 
 def test_dispatch_comando_desconocido_devuelve_la_ayuda(conn):
     assert bot.dispatch(1, 1, "volado", [], conn) == core.help_text()
 
 
-def test_dispatch_texto_libre_devuelve_la_ayuda(conn):
-    assert bot.dispatch(1, 1, None, [], conn) == core.help_text()
+def test_dispatch_texto_libre_registra_o_devuelve_la_ayuda(conn):
+    # T4 (RF-02 y RF-12 modificado por la 003): el texto crudo viaja en args
+    # como único token; forma → serie, forma inválida → aviso, sin forma → ayuda.
+    bot.dispatch(1, 1, "inicio", [], conn)
+    bot.dispatch(1, 1, "log", ["clean", "84x5"], conn)
+    assert bot.dispatch(1, 1, None, ["52x3"], conn) == "clean · serie 2: 52 kg × 3"
+    assert bot.dispatch(1, 1, None, ["52x0"], conn) == core.usage_example("log")
+    assert bot.dispatch(1, 1, None, ["mañana hago 52x3"], conn) == core.help_text()
+    assert conn.execute("SELECT COUNT(*) FROM series").fetchone()[0] == 2  # nada extra
 
 
 def test_dispatch_start_y_ayuda_muestran_la_ayuda(conn):
@@ -80,6 +91,26 @@ def test_dispatch_comando_conocido_por_dueno_sin_sesion(conn):
         bot.dispatch(1, 1, "log", ["clean", "84x5"], conn)
         == "No hay sesión abierta, envía /inicio"
     )
+
+
+# --- T4: texto suelto y /historial cableados (RF-02, RF-03, CL-8) ---
+
+
+def test_dispatch_texto_suelto_ajeno_no_guarda_nada(conn):
+    # CL-8: otro ID con "52x3" → ignorado por completo, sin respuesta ni guardado
+    bot.dispatch(1, 1, "inicio", [], conn)
+    bot.dispatch(1, 1, "log", ["clean", "84x5"], conn)
+    antes = conn.execute("SELECT COUNT(*) FROM series").fetchone()[0]
+    assert bot.dispatch(999, 1, None, ["52x3"], conn) is None
+    assert conn.execute("SELECT COUNT(*) FROM series").fetchone()[0] == antes
+
+
+def test_dispatch_historial_cableado_responde(conn):
+    # /historial cableado en COMMANDS (RF-03): responde igual que cmd_historial
+    assert bot.dispatch(1, 1, "historial", [], conn) == core.HISTORIAL_EMPTY
+    bot.dispatch(1, 1, "inicio", [], conn)
+    texto = bot.dispatch(1, 1, "historial", [], conn)
+    assert "abierta desde las" in texto
 
 
 # --- load_settings: .env con nombre claro, sin mostrar el token (RNF-2) ---
@@ -164,6 +195,155 @@ def test_el_token_nunca_aparece_en_el_log():
     corto = bot.format_error_log(NetworkError(f"falla con {token}"), token)
     assert token not in corto
     assert corto == "Sin conexión con Telegram, reintentando..."
+
+
+# --- T4: aviso de error interno en el chat (RF-04, CL-13, RNF-2, RNF-5) ---
+
+
+@pytest.mark.parametrize("error", [NetworkError("connection refused"), TimedOut("timed out")])
+def test_error_notice_de_red_no_avisa_en_el_chat(error):
+    # NetworkError/TimedOut → solo log, como hasta ahora (RF-04)
+    assert bot.error_notice(error) is None
+
+
+def test_error_notice_error_interno_aviso_generico_fijo():
+    texto = bot.error_notice(ValueError("detalle interno con el token 999:SECRETO"))
+    # texto fijo exacto del RF-04, sin el detalle del error ni el token
+    assert texto == "⚠️ Algo salió mal; no se ha perdido nada. Inténtalo de nuevo."
+    assert texto == core.INTERNAL_ERROR_TEXT
+    assert "detalle" not in texto and "SECRETO" not in texto
+
+
+class _MensajeFalso:
+    """Mensaje falso: acumula las respuestas; opcionalmente reply_text falla."""
+
+    def __init__(self, text=None, falla=False):
+        self.text = text
+        self.enviados = []
+        self._falla = falla
+
+    async def reply_text(self, texto):
+        if self._falla:
+            raise NetworkError("red caída al avisar")
+        self.enviados.append(texto)
+
+
+def _update_falso(user_id, message):
+    return SimpleNamespace(
+        effective_user=SimpleNamespace(id=user_id),
+        effective_message=message,
+        message=message,
+    )
+
+
+def _contexto_falso(error):
+    return SimpleNamespace(error=error)
+
+
+def test_on_error_error_interno_avisa_con_texto_generico(caplog):
+    token = "999:SECRETO"
+    mensaje = _MensajeFalso()
+    handler = bot.make_on_error(token, owner_id=1)
+    error = ValueError(f"interno con el token {token}")
+    asyncio.run(handler(_update_falso(1, mensaje), _contexto_falso(error)))
+    # en el chat: solo el texto genérico (CL-13); nunca el detalle ni el token
+    assert mensaje.enviados == [core.INTERNAL_ERROR_TEXT]
+    assert "interno" not in mensaje.enviados[0]
+    assert token not in mensaje.enviados[0]
+    # en el log: el detalle completo con el token redactado (RNF-2)
+    assert "ValueError" in caplog.text
+    assert token not in caplog.text and "***" in caplog.text
+
+
+def test_on_error_de_red_no_avisa_y_solo_loguea(caplog):
+    mensaje = _MensajeFalso()
+    handler = bot.make_on_error("999:SECRETO", owner_id=1)
+    asyncio.run(handler(_update_falso(1, mensaje), _contexto_falso(NetworkError("caída"))))
+    assert mensaje.enviados == []  # sin aviso en el chat (RF-04)
+    assert "Sin conexión con Telegram" in caplog.text  # pero siempre en el log
+
+
+def test_on_error_update_sin_mensaje_no_rompe(caplog):
+    handler = bot.make_on_error("999:SECRETO", owner_id=1)
+    asyncio.run(handler(None, _contexto_falso(ValueError("sin update"))))
+    asyncio.run(handler(SimpleNamespace(), _contexto_falso(ValueError("sin atributos"))))
+    assert caplog.text.count("ValueError") >= 2  # el log siempre recibe el detalle
+
+
+def test_on_error_si_el_aviso_falla_solo_loguea(caplog):
+    token = "999:SECRETO"
+    mensaje = _MensajeFalso(falla=True)
+    handler = bot.make_on_error(token, owner_id=1)
+    asyncio.run(handler(_update_falso(1, mensaje), _contexto_falso(ValueError("origen"))))
+    assert mensaje.enviados == []  # el aviso no se pudo enviar...
+    assert "ValueError" in caplog.text  # ...pero el detalle del origen quedó en el log
+
+
+def test_on_error_ajeno_no_recibe_el_aviso(caplog):
+    # RNF-5: el aviso solo puede llegar al dueño (RF-08)
+    mensaje = _MensajeFalso()
+    handler = bot.make_on_error("999:SECRETO", owner_id=1)
+    asyncio.run(handler(_update_falso(999, mensaje), _contexto_falso(ValueError("interno"))))
+    assert mensaje.enviados == []
+    assert "ValueError" in caplog.text
+
+
+# --- T4: menú publicado al arrancar (RF-01, RNF-2, riesgo R5) ---
+
+
+class _BotFalso:
+    """Bot falso: guarda los comandos publicados o lanza si se pide (sin red)."""
+
+    def __init__(self, falla=False):
+        self.comandos = None
+        self._falla = falla
+
+    async def set_my_commands(self, comandos):
+        if self._falla:
+            raise RuntimeError("fallo simulado con el token 999:SECRETO")
+        self.comandos = comandos
+
+
+def test_publish_menu_publica_el_menu_completo():
+    bot_falso = _BotFalso()
+    asyncio.run(bot.publish_menu(SimpleNamespace(bot=bot_falso)))
+    assert bot_falso.comandos == core.COMMAND_MENU  # la constante única (RF-01)
+    assert ("historial", "Últimas sesiones") in bot_falso.comandos
+
+
+def test_publish_menu_si_falla_no_propaga_y_se_loguea_el_tipo(caplog):
+    app = SimpleNamespace(bot=_BotFalso(falla=True))
+    asyncio.run(bot.publish_menu(app))  # no lanza: el bot arrancaría igual (R5)
+    assert "RuntimeError" in caplog.text  # el tipo de la excepción...
+    assert "fallo simulado" not in caplog.text  # ...y nunca str(exc) (RNF-2)
+    assert "SECRETO" not in caplog.text  # ni el token
+
+
+# --- T4: handler de texto libre (RF-02) ---
+
+
+def test_free_text_args_quita_espacios_y_acepta_vacio():
+    assert bot.free_text_args("52x3") == ["52x3"]
+    assert bot.free_text_args("  52x3  ") == ["52x3"]  # strip (plan §9)
+    assert bot.free_text_args(None) is None  # foto, sticker…: se ignora
+    assert bot.free_text_args("") is None
+
+
+def test_handler_texto_libre_registra_y_responde(conn):
+    bot.dispatch(1, 1, "inicio", [], conn)
+    bot.dispatch(1, 1, "log", ["clean", "84x5"], conn)
+    mensaje = _MensajeFalso(text="52x3")
+    handler = bot.make_free_text_handler(1, conn)
+    asyncio.run(handler(_update_falso(1, mensaje), None))
+    assert mensaje.enviados == ["clean · serie 2: 52 kg × 3"]
+
+
+def test_handler_mensaje_sin_texto_se_ignora_sin_error(conn):
+    # foto o sticker (texto None): el handler no responde ni lanza excepción
+    mensaje = _MensajeFalso(text=None)
+    handler = bot.make_free_text_handler(1, conn)
+    asyncio.run(handler(_update_falso(1, mensaje), None))
+    assert mensaje.enviados == []
 
 
 # --- separación de capas (constitución 3) ---

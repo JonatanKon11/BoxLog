@@ -48,6 +48,7 @@ COMMANDS = {
     "hoy": commands.cmd_hoy,
     "log": commands.cmd_log,
     "deshacer": commands.cmd_deshacer,
+    "historial": commands.cmd_historial,
 }
 
 
@@ -56,11 +57,14 @@ def dispatch(user_id, owner_id: int, command, args: list[str], connection) -> st
 
     Función pura de decisión: no habla con la red, por eso es testeable
     sin conexión. `command` es el nombre en minúsculas sin barra; None es
-    texto libre. Dueño ajeno → se ignora; desconocido → ayuda (CL-12).
+    texto libre y `args` trae el mensaje crudo como único elemento (RF-02).
+    Dueño ajeno → se ignora; desconocido → ayuda (RF-12).
     """
     if not is_owner(user_id, owner_id):
         return None
-    handler = COMMANDS.get(command) if command else None
+    if command is None:
+        return commands.cmd_free_text(connection, args)
+    handler = COMMANDS.get(command)
     if handler is None:
         return core.help_text()
     return handler(connection, args)
@@ -80,6 +84,81 @@ def format_error_log(error: BaseException, token: str = "") -> str:
     if token:
         text = text.replace(token, "***")
     return text
+
+
+def error_notice(error: BaseException) -> str | None:
+    """Aviso corto para el chat (RF-04): None si es de red/timeout (solo log).
+
+    Texto fijo de core.INTERNAL_ERROR_TEXT: el chat nunca ve el detalle del
+    error ni el token (RNF-2); el detalle sigue yendo al log con format_error_log.
+    """
+    if isinstance(error, (NetworkError, TimedOut)):
+        return None
+    return core.INTERNAL_ERROR_TEXT
+
+
+async def publish_menu(app) -> None:
+    """Publica el menú de comandos al arrancar (RF-01), sin romper el arranque.
+
+    Si set_my_commands falla (p. ej. de red) solo se loguea el tipo de
+    excepción —nunca str(exc) ni el token (RNF-2)— y el bot arranca igual (R5).
+    """
+    try:
+        await app.bot.set_my_commands(core.COMMAND_MENU)
+    except Exception as exc:
+        logger.error("No se pudo publicar el menú: %s", type(exc).__name__)
+
+
+def free_text_args(message_text: str | None) -> list[str] | None:
+    """Argumentos de dispatch para un mensaje de texto libre (RF-02), o None.
+
+    Devuelve el mensaje con strip() como único elemento (los espacios
+    internos los decide después core.is_log_token), o None si no hay texto
+    (foto, sticker u otro sin texto: se ignora sin error).
+    """
+    if not message_text:
+        return None
+    return [message_text.strip()]
+
+
+def make_free_text_handler(owner_id: int, connection):
+    """Handler de mensajes de texto sin comando (RF-02): solo despacha y responde."""
+
+    async def handler(update, context) -> None:
+        message = update.message
+        args = free_text_args(message.text if message is not None else None)
+        if args is None:
+            return
+        text = dispatch(update.effective_user.id, owner_id, None, args, connection)
+        if text is not None:
+            await message.reply_text(text)
+
+    return handler
+
+
+def make_on_error(token: str, owner_id: int):
+    """Handler de errores: log siempre con detalle; aviso genérico en el chat (RF-04).
+
+    El aviso solo llega al dueño (RNF-5) y va dentro de try/except: si el
+    envío falla, solo se loguea. El chat nunca ve str(error) ni traceback.
+    """
+
+    async def on_error(update, context) -> None:
+        error = context.error
+        logger.error(format_error_log(error, token))  # siempre (RF-04)
+        aviso = error_notice(error)
+        if aviso is None:
+            return
+        mensaje = getattr(update, "effective_message", None) if update is not None else None
+        usuario = getattr(update, "effective_user", None) if update is not None else None
+        if mensaje is None or not is_owner(getattr(usuario, "id", None), owner_id):
+            return
+        try:
+            await mensaje.reply_text(aviso)
+        except Exception as exc:
+            logger.error(format_error_log(exc, token))  # el aviso no puede romper nada
+
+    return on_error
 
 
 def load_settings() -> Settings:
@@ -106,7 +185,7 @@ def main() -> None:
     connection = db.connect(DATA_PATH)
     db.init_schema(connection)
 
-    app = Application.builder().token(settings.token).build()
+    app = Application.builder().token(settings.token).post_init(publish_menu).build()
     owner_id = settings.owner_id
 
     def make_command_handler(name: str):
@@ -126,14 +205,8 @@ def main() -> None:
         if text is not None:
             await update.message.reply_text(text)
 
-    async def free_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        text = dispatch(update.effective_user.id, owner_id, None, [], connection)
-        if text is not None:
-            await update.message.reply_text(text)
-
-    async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-        # Errores de red: una línea y fuera; el resto, completo (RF-08).
-        logger.error(format_error_log(context.error, settings.token))
+    free_text = make_free_text_handler(owner_id, connection)
+    on_error = make_on_error(settings.token, owner_id)
 
     for name in COMMANDS:
         app.add_handler(CommandHandler(name, make_command_handler(name)))
