@@ -972,6 +972,192 @@ def test_suelto_peso_grande_se_registra_como_log(conn):
     assert texto == "clean · serie 2: 600 kg × 3"
 
 
+# --- /historial (RF-03, spec 003) ---
+
+# Mismo esquema v1 que tests/test_db.py (base de la 001) para probar la migración.
+_ESQUEMA_V1 = """
+CREATE TABLE IF NOT EXISTS profile (
+    id INTEGER PRIMARY KEY,
+    weight_kg REAL NOT NULL,
+    height_cm REAL NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS rm_history (
+    id INTEGER PRIMARY KEY,
+    exercise TEXT NOT NULL,
+    weight_kg REAL NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS sessions (
+    id INTEGER PRIMARY KEY,
+    started_at TEXT NOT NULL,
+    ended_at TEXT
+);
+CREATE TABLE IF NOT EXISTS plan_items (
+    id INTEGER PRIMARY KEY,
+    session_id INTEGER NOT NULL REFERENCES sessions(id),
+    exercise TEXT NOT NULL,
+    position INTEGER NOT NULL,
+    weight_kg REAL NOT NULL,
+    consumed INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS series (
+    id INTEGER PRIMARY KEY,
+    session_id INTEGER NOT NULL REFERENCES sessions(id),
+    exercise TEXT NOT NULL,
+    real_weight_kg REAL NOT NULL,
+    reps INTEGER NOT NULL,
+    planned_weight_kg REAL,
+    plan_item_id INTEGER REFERENCES plan_items(id) ON DELETE SET NULL,
+    created_at TEXT NOT NULL
+);
+"""
+
+
+def _sesion(connection, session_id, started, ended):
+    connection.execute(
+        "INSERT INTO sessions (id, started_at, ended_at) VALUES (?, ?, ?)",
+        (session_id, started, ended),
+    )
+
+
+def _serie(connection, serie_id, session_id, exercise, peso, reps, planned=None):
+    connection.execute(
+        "INSERT INTO series (id, session_id, exercise, real_weight_kg, reps,"
+        " planned_weight_kg, plan_item_id, created_at)"
+        " VALUES (?, ?, ?, ?, ?, ?, NULL, '2026-10-17T12:00:00')",
+        (serie_id, session_id, exercise, peso, reps, planned),
+    )
+
+
+def test_historial_vacio_mensaje_claro(conn):
+    assert commands.cmd_historial(conn, []) == "Aún no hay sesiones. Abre la primera con /inicio"
+
+
+def test_historial_con_argumentos_aviso_de_uso_corto(conn):
+    assert commands.cmd_historial(conn, ["5"]) == "Usa /historial (sin nada más)"
+
+
+def test_historial_abierta_arriba_marcada_y_cerradas_de_nueva_a_antigua(conn):
+    for numero in range(1, 8):  # 7 cerradas, días 01 a 07
+        _sesion(
+            conn, numero, f"2026-10-{numero:02d}T12:00:00", f"2026-10-{numero:02d}T13:11:00"
+        )
+    _sesion(conn, 8, "2026-10-20T02:35:00", None)  # 19/10 23:35 en local
+    texto = commands.cmd_historial(conn, [])
+    assert texto.splitlines()[0] == "19/10 · abierta desde las 23:35"
+    # las 5 cerradas más recientes, de nueva a antigua
+    orden = ["07/10", "06/10", "05/10", "04/10", "03/10"]
+    posiciones = [texto.index(f"{fecha} ·") for fecha in orden]
+    assert posiciones == sorted(posiciones)
+    assert "02/10" not in texto  # descartadas primero las más antiguas (CL-11)
+    assert "01/10" not in texto
+
+
+def test_historial_cabecera_cerrada_con_fecha_y_duracion_locales(conn):
+    # la marca UTC es el 14/10, pero en local (UTC-3) sigue siendo el 13/10
+    _sesion(conn, 1, "2026-10-14T00:48:00", "2026-10-14T01:59:00")
+    texto = commands.cmd_historial(conn, [])
+    assert texto.splitlines()[0] == "13/10 · 1 h 11 min"
+
+
+def test_historial_linea_por_ejercicio_como_fin_y_sin_pares(conn):
+    _sesion(conn, 1, "2026-10-13T21:18:00", "2026-10-13T22:29:00")
+    _serie(conn, 1, 1, "clean", 84.0, 5, planned=84.0)
+    _serie(conn, 2, 1, "clean", 96.0, 3)
+    _serie(conn, 3, 1, "back squat", 100.0, 2, planned=95.0)
+    texto = commands.cmd_historial(conn, [])
+    assert "clean: 2 series · 8 repeticiones · volumen 708 kg · máx 96 kg" in texto
+    assert "back squat: 1 serie · 2 repeticiones · volumen 200 kg · máx 100 kg" in texto
+    assert "plan→real" not in texto  # CL-14: /historial no muestra pares
+
+
+def test_historial_sesion_cerrada_sin_series(conn):
+    _sesion(conn, 1, "2026-10-14T00:48:00", "2026-10-14T01:59:00")
+    assert commands.cmd_historial(conn, []) == "13/10 · 1 h 11 min"  # solo cabecera
+
+
+def test_historial_solo_lectura_deja_la_base_identica(conn):
+    _sesion(conn, 1, "2026-10-13T21:18:00", "2026-10-13T22:29:00")
+    _serie(conn, 1, 1, "clean", 84.0, 5, planned=84.0)
+    _sesion(conn, 2, "2026-10-20T02:35:00", None)
+    tablas = ("profile", "rm_history", "sessions", "plan_items", "series")
+    antes = {
+        tabla: [tuple(row) for row in conn.execute(f"SELECT * FROM {tabla} ORDER BY id")]
+        for tabla in tablas
+    }
+    commands.cmd_historial(conn, [])
+    despues = {
+        tabla: [tuple(row) for row in conn.execute(f"SELECT * FROM {tabla} ORDER BY id")]
+        for tabla in tablas
+    }
+    assert despues == antes
+
+
+def test_historial_tope_descarta_las_mas_antiguas_sin_partir_nada(conn):
+    # 6 cerradas de 12 ejercicios largos cada una + la abierta: no cabe todo junto
+    serie_id = 1
+    for sesion_id in range(1, 7):
+        _sesion(
+            conn,
+            sesion_id,
+            f"2026-10-{sesion_id:02d}T12:00:00",
+            f"2026-10-{sesion_id:02d}T13:11:00",
+        )
+        for ejercicio in range(12):
+            _serie(
+                conn,
+                serie_id,
+                sesion_id,
+                f"ejercicio largo numero {ejercicio} del dia",
+                100.0,
+                3,
+            )
+            serie_id += 1
+    _sesion(conn, 7, "2026-10-20T02:35:00", None)
+    texto = commands.cmd_historial(conn, [])
+    assert len(texto) <= core.HISTORIAL_MAX_CHARS  # nunca supera el tope
+    assert texto.splitlines()[0] == "19/10 · abierta desde las 23:35"  # la abierta, siempre
+    assert "01/10" not in texto  # lo más antiguo, descartado primero
+    bloque_completo = "\n".join(
+        ["06/10 · 1 h 11 min"]
+        + [
+            f"ejercicio largo numero {n} del dia: 1 serie · 3 repeticiones"
+            " · volumen 300 kg · máx 100 kg"
+            for n in range(12)
+        ]
+    )
+    assert bloque_completo in texto  # una sesión nunca se corta por la mitad (CL-11)
+
+
+def test_historial_sesion_unica_enorme_se_recorta_con_puntos(conn):
+    # plan §9: si ni quitando sesiones cabe (una sola enorme), se recorta con "…"
+    _sesion(conn, 1, "2026-10-14T00:48:00", "2026-10-14T06:00:00")
+    for serie_id in range(1, 80):
+        _serie(conn, serie_id, 1, f"ejercicio largo numero {serie_id} del dia", 100.0, 3)
+    texto = commands.cmd_historial(conn, [])
+    assert len(texto) <= core.HISTORIAL_MAX_CHARS
+    assert texto.endswith("…")
+
+
+def test_historial_funciona_sobre_base_migrada_de_v1(tmp_path):
+    base = tmp_path / "migrada.db"
+    connection = db.connect(base)
+    connection.executescript(_ESQUEMA_V1)
+    connection.execute("PRAGMA user_version = 1")
+    _sesion(connection, 1, "2026-10-16T23:30:00", "2026-10-17T01:15:00")
+    _serie(connection, 1, 1, "clean", 84.0, 5, planned=84.0)  # serie v1: sin plan copiado
+    connection.commit()
+    connection.close()
+    migrada = db.connect(base)
+    db.init_schema(migrada)  # v1 → v2 con respaldo .bak-v1 (migración de la 002)
+    texto = commands.cmd_historial(migrada, [])
+    assert texto.splitlines()[0] == "16/10 · 1 h 45 min"
+    assert "clean: 1 serie · 5 repeticiones · volumen 420 kg · máx 84 kg" in texto
+    assert "plan→real" not in texto  # planned_* llegan como NULL tras migrar
+    migrada.close()
+
+
 # --- separación de capas (constitución 3) ---
 
 

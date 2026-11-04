@@ -154,6 +154,78 @@ def cmd_fin(connection, args: list[str]) -> str:
     return core.build_summary(start, core.utc_now(), summary_series)
 
 
+def _bloque_sesion(connection, sesion: dict) -> str:
+    """Texto de una sesión para /historial: cabecera + una línea por ejercicio.
+
+    La cabecera lleva fecha y hora local; las cerradas muestran duración y las
+    abiertas "abierta desde las HH:MM". Cada línea usa el mismo formato que /fin
+    (core.exercise_stat_line), sin pares plan→real (RF-03, CL-14).
+    """
+    inicio = datetime.fromisoformat(sesion["started_at"])
+    if inicio.tzinfo is None:
+        inicio = inicio.replace(tzinfo=timezone.utc)  # la base guarda UTC (RF-02)
+    local = core.to_local(inicio)
+    if sesion["ended_at"] is None:
+        cabecera = f"{local:%d/%m} · abierta desde las {local:%H:%M}"
+    else:
+        fin = datetime.fromisoformat(sesion["ended_at"])
+        if fin.tzinfo is None:
+            fin = fin.replace(tzinfo=timezone.utc)
+        segundos = (fin - inicio).total_seconds()
+        cabecera = f"{local:%d/%m} · {core.format_duration(segundos)}"
+    lineas = [cabecera]
+    # list_series usa los nombres de la base; los traduzco a los de core (como cmd_fin).
+    items = [
+        {
+            "exercise": serie["exercise"],
+            "real_weight": serie["real_weight_kg"],
+            "reps": serie["reps"],
+        }
+        for serie in sesion["_series"]
+    ]
+    for _key, ejercicios in core.group_series_by_exercise(items):
+        lineas.append(core.exercise_stat_line(ejercicios))
+    return "\n".join(lineas)
+
+
+def _recortar_por_tope(bloques: list[str], abierta_primera: bool) -> str:
+    """Une los bloques descartando los más antiguos hasta caber en un mensaje.
+
+    Nunca parte una sesión por la mitad (CL-11): se quitan bloques enteros, de
+    la más antigua hacia atrás, y siempre se conserva la sesión más reciente
+    (y la abierta, si la hay). Si aun así no cabe, se trunca con "…".
+    """
+    while True:
+        texto = "\n\n".join(bloques)
+        if len(texto) <= core.HISTORIAL_MAX_CHARS or len(bloques) == (2 if abierta_primera else 1):
+            if len(texto) > core.HISTORIAL_MAX_CHARS:
+                return texto[: core.HISTORIAL_MAX_CHARS - 1] + "…"
+            return texto
+        bloques.pop()  # la más antigua de las que quedan (la abierta va primero)
+
+
+def cmd_historial(connection, args: list[str]) -> str:
+    """/historial (RF-03, spec 003): la sesión abierta y las 5 últimas cerradas.
+
+    De arriba abajo: primero la abierta (si la hay) y luego las cerradas de más
+    reciente a más antigua. Cada sesión con una cabecera de fecha/hora local y
+    una línea por ejercicio en el formato de /fin. Solo lectura: no escribe
+    nada en la base. Argumentos de más → aviso de uso.
+    """
+    if args:
+        return core.usage_example("historial")
+    sesiones = db.get_recent_sessions(connection)
+    if not sesiones:
+        return core.HISTORIAL_EMPTY
+    bloques = []
+    for sesion in sesiones:
+        copia = dict(sesion)
+        copia["_series"] = db.list_series(connection, sesion["id"])
+        bloques.append(_bloque_sesion(connection, copia))
+    abierta_primera = bool(sesiones) and sesiones[0]["ended_at"] is None
+    return _recortar_por_tope(bloques, abierta_primera)
+
+
 def cmd_perfil(connection, args: list[str]) -> str:
     """/perfil <peso> <altura> (RF-01): guarda el perfil; funciona con sesión abierta o no (CL-6)."""
     if len(args) != 2:

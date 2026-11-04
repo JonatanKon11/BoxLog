@@ -143,6 +143,11 @@ FREE_NO_SERIES = (
     "Aún no hay series en esta sesión. Registra una con "
     "/log <ejercicio> <peso>x<reps>"
 )
+HISTORIAL_EMPTY = "Aún no hay sesiones. Abre la primera con /inicio"
+
+# Tope de caracteres de /historial: se descartan sesiones cerradas antiguas
+# hasta caber en un solo mensaje; nunca se parte por la mitad (RF-03, CL-11).
+HISTORIAL_MAX_CHARS = 3800
 
 # Menú del chat y /ayuda salen de esta única constante (RF-01, spec 003).
 # Cada descripción va en español y con 25 caracteres o menos, el límite del menú.
@@ -412,6 +417,42 @@ def format_start_time(started_at: str, now: datetime) -> str:
     return f"el {start:%d/%m} a las {hora}"
 
 
+def group_series_by_exercise(series: list[dict]) -> list[tuple[str, list[dict]]]:
+    """Series agrupadas por ejercicio normalizado, en orden de su primera serie.
+
+    Devuelve pares (clave_normalizada, items); lo usan build_summary (RF-04) y
+    /historial (RF-03) para recorrer cada ejercicio una sola vez.
+    """
+    order: list[str] = []
+    grouped: dict[str, list[dict]] = {}
+    for item in series:
+        key = normalize_exercise(item["exercise"])
+        if key not in grouped:
+            grouped[key] = []
+            order.append(key)
+        grouped[key].append(item)
+    return [(key, grouped[key]) for key in order]
+
+
+def exercise_stat_line(items: list[dict]) -> str:
+    """Línea de totales de un ejercicio: '<ej>: N serie(s) · R reps · volumen · máx'.
+
+    Es exactamente la línea que pone /fin por ejercicio (RF-04), extraída aquí
+    para que /historial (RF-03) muestre el mismo formato. El volumen y el máximo
+    usan el peso real; los pares plan→real los arma build_summary aparte.
+    """
+    count = len(items)
+    reps = sum(int(item["reps"]) for item in items)
+    volume = sum(float(item["real_weight"]) * int(item["reps"]) for item in items)
+    max_weight = max(float(item["real_weight"]) for item in items)
+    serie_word = "serie" if count == 1 else "series"
+    rep_word = "repetición" if reps == 1 else "repeticiones"
+    return (
+        f"{normalize_exercise(items[0]['exercise'])}: {count} {serie_word} · "
+        f"{reps} {rep_word} · volumen {format_kg(volume)} kg · máx {format_kg(max_weight)} kg"
+    )
+
+
 def build_summary(start: datetime, end: datetime, series: list[dict]) -> str:
     """Resumen de la sesión (RF-04).
 
@@ -423,28 +464,12 @@ def build_summary(start: datetime, end: datetime, series: list[dict]) -> str:
     if not series:
         return "Sesión cerrada sin series."
     lines = [f"Duración: {format_duration((end - start).total_seconds())}"]
-    order: list[str] = []
-    grouped: dict[str, list[dict]] = {}
-    for item in series:
-        key = normalize_exercise(item["exercise"])
-        if key not in grouped:
-            grouped[key] = []
-            order.append(key)
-        grouped[key].append(item)
     total_volume = 0.0
-    for key in order:
-        items = grouped[key]
-        count = len(items)
-        reps = sum(int(item["reps"]) for item in items)
-        volume = sum(float(item["real_weight"]) * int(item["reps"]) for item in items)
-        max_weight = max(float(item["real_weight"]) for item in items)
-        total_volume += volume
-        serie_word = "serie" if count == 1 else "series"
-        rep_word = "repetición" if reps == 1 else "repeticiones"
-        lines.append(
-            f"{key}: {count} {serie_word} · {reps} {rep_word} · "
-            f"volumen {format_kg(volume)} kg · máx {format_kg(max_weight)} kg"
+    for key, items in group_series_by_exercise(series):
+        total_volume += sum(
+            float(item["real_weight"]) * int(item["reps"]) for item in items
         )
+        lines.append(exercise_stat_line(items))
         pairs = []
         for item in items:
             if item.get("planned_weight") is None:

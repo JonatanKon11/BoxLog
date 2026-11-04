@@ -265,6 +265,24 @@ def get_session(connection: sqlite3.Connection, session_id: int) -> dict | None:
     return dict(row) if row else None
 
 
+def get_recent_sessions(connection: sqlite3.Connection) -> list[dict]:
+    """La sesión abierta (si la hay) y las 5 últimas cerradas, para /historial.
+
+    Solo lectura: sin commit, sin escribir. Va la abierta primero y luego las
+    cerradas de más reciente a más antigua (ended_at DESC), que es el orden en
+    que las muestra /historial (RF-03). Cada fila trae id, started_at y ended_at.
+    """
+    abierta = connection.execute(
+        "SELECT id, started_at, ended_at FROM sessions WHERE ended_at IS NULL"
+        " ORDER BY id DESC LIMIT 1"
+    ).fetchall()
+    cerradas = connection.execute(
+        "SELECT id, started_at, ended_at FROM sessions WHERE ended_at IS NOT NULL"
+        " ORDER BY ended_at DESC LIMIT 5"
+    ).fetchall()
+    return [dict(row) for row in abierta + cerradas]
+
+
 def close_session(connection: sqlite3.Connection, session_id: int) -> None:
     """Cierra la sesión poniendo ended_at (borrado por id, nunca tablas enteras)."""
     connection.execute(

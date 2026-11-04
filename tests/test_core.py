@@ -14,12 +14,14 @@ from boxlog.core import (
     COMMAND_MENU,
     convert_percentages,
     convert_plan_entries,
+    exercise_stat_line,
     format_duration,
     format_hoy_lines,
     format_kg,
     format_log_confirmation,
     format_plan_suffix,
     format_start_time,
+    group_series_by_exercise,
     help_text,
     is_log_token,
     is_plan_token,
@@ -891,3 +893,43 @@ def test_is_log_token_con_forma_de_pesoxreps(texto):
 def test_is_log_token_texto_libre_no_tiene_forma(texto):
     """Sin forma de registro: va a la lista de comandos (RF-12 modificado)."""
     assert is_log_token(texto) is False
+
+
+# --- group_series_by_exercise y exercise_stat_line (RF-03, spec 003) ---
+
+
+def test_exercise_stat_line_con_el_mismo_formato_que_el_resumen():
+    items = [
+        {"exercise": "clean", "real_weight": 84.0, "reps": 5},
+        {"exercise": "clean", "real_weight": 96.0, "reps": 3},
+    ]
+    assert (
+        exercise_stat_line(items)
+        == "clean: 2 series · 8 repeticiones · volumen 708 kg · máx 96 kg"
+    )
+
+
+def test_exercise_stat_line_serie_unica_y_sin_pares_de_plan():
+    items = [
+        {
+            "exercise": "back squat",
+            "real_weight": 100.0,
+            "reps": 1,
+            "planned_weight": 95.0,
+            "planned_max_kg": 98.0,
+        }
+    ]
+    linea = exercise_stat_line(items)
+    assert linea == "back squat: 1 serie · 1 repetición · volumen 100 kg · máx 100 kg"
+    assert "plan" not in linea  # los pares los añade build_summary, no la línea
+
+
+def test_group_series_by_exercise_ordena_por_la_primera_serie():
+    series = [
+        {"exercise": "Clean", "real_weight": 84.0, "reps": 5},
+        {"exercise": "back squat", "real_weight": 100.0, "reps": 2},
+        {"exercise": "clean", "real_weight": 96.0, "reps": 3},
+    ]
+    grupos = group_series_by_exercise(series)
+    assert [clave for clave, _ in grupos] == ["clean", "back squat"]
+    assert [len(items) for _, items in grupos] == [2, 1]  # Clean y clean, juntos

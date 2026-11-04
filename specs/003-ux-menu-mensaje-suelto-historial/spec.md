@@ -34,8 +34,9 @@ No se cambia el esquema de la base (sin migración) ni la mecánica de /log, /de
   **único token** con forma de `<peso>x<repeticiones>`, el sistema deberá registrarlo
   como una serie, usando el ejercicio de la última serie de la sesión abierta.
   - CA: la forma es número (coma o punto decimal, RF-10 de la 001) seguido de "x" o "X"
-    y un entero de repeticiones; la validación es la misma que /log de la 001 (peso entre
-    1 y 500 kg, repeticiones enteras ≥ 1, sin notación científica ni nan/inf).
+    y un entero de repeticiones. [Corregido en T2: la validación es exactamente la de
+    /log de la 001 (peso y reps > 0, reps enteras, sin notación científica ni nan/inf);
+    /log no tiene techo de kilos, por eso "600x3" se registra]
   - CA: el ejercicio es el de la **última serie registrada en la sesión abierta** (la
     misma que borraría /deshacer, RF-07 de la 001); tras un /deshacer, el siguiente
     mensaje suelto usa la serie que quedó como última.
@@ -43,8 +44,10 @@ No se cambia el esquema de la base (sin migración) ni la mecánica de /log, /de
     idénticos a /log (RF-06 de la 001, RF-04 y RF-05 de la 002): misma línea
     "clean · serie N: 52 kg × 3 (plan …)" y mismo sufijo con × y con rango.
   - CA: un token con forma de `<peso>x<repeticiones>` pero inválido ("52x0", "52x",
-    "1e3x5", "600x3") → aviso de uso de RF-09 con el motivo y un ejemplo, sin guardar
+    "1e3x5") → aviso de uso de RF-09 con el motivo y un ejemplo, sin guardar
     nada. **(RF-09 modificado por esta spec)**
+    [Ajuste de T2: "x3" (sin peso) y "-5x3" (peso negativo) también dan aviso de uso,
+    por simetría con "52x": /log los rechaza igual con su aviso.]
   - CA: cualquier otro texto libre (con espacios, con caracteres de más o sin forma de
     registro) y los comandos desconocidos → la lista de comandos (RF-12 de la 001), sin
     guardar nada. **(RF-12 modificado por esta spec)**
@@ -110,8 +113,9 @@ No se cambia el esquema de la base (sin migración) ni la mecánica de /log, /de
   `<peso>x<repeticiones>`; lista de comandos, sin guardar nada.
 - CL-3 Coma decimal y mayúscula ("52,5X3") → se registra igual que /log (RF-10 de la
   001, mayúscula/minúscula): "clean · serie N: 52,5 kg × 3 (plan …)".
-- CL-4 Forma de registro pero inválida ("52x0", "52x", "5x2,5", "1e3x5", "600x3") →
-  aviso de uso con el motivo y un ejemplo (RF-09); no se guarda nada.
+- CL-4 Forma de registro pero inválida ("52x0", "52x", "x3", "-5x3", "5x2,5", "1e3x5")
+  → aviso de uso con el motivo y un ejemplo (RF-09); no se guarda nada. ("600x3" no es
+  inválido: /log no tiene techo de kilos, se registra — RF-02 corregido en T2.)
 - CL-5 Mensaje suelto válido sin sesión abierta → "No hay sesión abierta, envía /inicio"
   (CL-2 de la 001); no se guarda nada.
 - CL-6 Sesión abierta sin series (con o sin plan de /hoy) → "Aún no hay series en esta
@@ -148,6 +152,9 @@ No se cambia el esquema de la base (sin migración) ni la mecánica de /log, /de
 - Historial de RM (se guarda sin consultarse; /rms solo muestra los vigentes).
 - Borrar o editar series de sesiones cerradas; /historial es solo lectura.
 - Partir mensajes en varios ni paginación (quedará para 003b si hace falta).
+- Tope de peso o repeticiones en /log (que el mensaje suelto heredaría): idea futura,
+  **no implementado**; hoy /log no tiene techo de kilos (RF-06 de la 001, RF-02
+  corregido en T2).
 
 ## Supuestos
 - La base no cambia de esquema: /historial se calcula con consultas sobre `sessions` y

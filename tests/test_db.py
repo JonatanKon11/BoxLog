@@ -770,3 +770,48 @@ def test_flujo_real_tras_migrar(base_v1):
     assert "Duración: " in fin
     assert "plan→real: 96-102→98" in fin
     assert db.get_open_session(connection) is None
+
+
+# --- get_recent_sessions para /historial (RF-03, spec 003) ---
+
+
+def _insertar_sesion(connection, session_id, started, ended):
+    connection.execute(
+        "INSERT INTO sessions (id, started_at, ended_at) VALUES (?, ?, ?)",
+        (session_id, started, ended),
+    )
+
+
+def test_get_recent_sessions_abierta_primero_y_cerradas_de_nueva_a_antigua(conn):
+    # 7 cerradas (ids 1-7) + una abierta (id 8): salen la abierta y las 5 cerradas más nuevas
+    for numero in range(1, 8):
+        _insertar_sesion(
+            conn, numero, f"2026-10-{numero:02d}T12:00:00", f"2026-10-{numero:02d}T13:00:00"
+        )
+    _insertar_sesion(conn, 8, "2026-10-20T02:35:00", None)
+    sesiones = db.get_recent_sessions(conn)
+    assert [s["id"] for s in sesiones] == [8, 7, 6, 5, 4, 3]
+    assert sesiones[0]["ended_at"] is None  # la abierta, arriba
+    assert all(s["ended_at"] is not None for s in sesiones[1:])
+
+
+def test_get_recent_sessions_sin_abierta_las_ultimas_cerradas(conn):
+    for numero in range(1, 4):
+        _insertar_sesion(
+            conn, numero, f"2026-10-{numero:02d}T12:00:00", f"2026-10-{numero:02d}T13:00:00"
+        )
+    assert [s["id"] for s in db.get_recent_sessions(conn)] == [3, 2, 1]
+
+
+def test_get_recent_sessions_base_vacia(conn):
+    assert db.get_recent_sessions(conn) == []
+
+
+def test_get_recent_sessions_es_solo_lectura(conn):
+    for numero in range(1, 4):
+        _insertar_sesion(
+            conn, numero, f"2026-10-{numero:02d}T12:00:00", f"2026-10-{numero:02d}T13:00:00"
+        )
+    antes = _filas(conn, "SELECT * FROM sessions ORDER BY id")
+    assert db.get_recent_sessions(conn) != []  # algo devuelve
+    assert _filas(conn, "SELECT * FROM sessions ORDER BY id") == antes  # nada cambia
