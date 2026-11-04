@@ -80,6 +80,51 @@ dentro de una transacción, añade las columnas de plan (`reps`, `range_max_kg`,
 disponible. Una carpeta sin datos nace directamente en la versión 2, sin copia.
 (Decisión de cierre: migrar con el bot apagado y con una copia manual previa propia.)
 
+## Novedades de v0.3: UX (menú, mensaje suelto, /historial y aviso de error)
+
+**Menú de comandos.** Al escribir "/" en el chat aparecen los diez comandos con su
+descripción corta en español; la lista sale de la misma constante que `/ayuda`, así que
+el menú y la ayuda siempre muestran exactamente lo mismo (con `/historial` incluido).
+
+**Mensaje suelto.** Ya no hace falta `/log`: escribes solo el registro y toma el
+ejercicio de la última serie de la sesión abierta.
+
+| Escribes | Respuesta |
+| --- | --- |
+| `52x3` | `clean · serie 2: 52 kg × 3 (plan 80-85 kg × 1)` |
+| `52,5X3` | `clean · serie 3: 52,5 kg × 3` (coma decimal, sin plan si ya se agotó) |
+| `52x0` | aviso de uso con el motivo y un ejemplo; no guarda nada |
+| `52x3?` o `hola` | la lista de comandos; no guarda nada |
+
+Reglas:
+
+- **Un solo token** con forma `<peso>x<reps>`; con espacios, caracteres de más o sin
+  forma responde la lista de comandos.
+- **Usa el último ejercicio** de la sesión abierta (el que borraria `/deshacer`); sin
+  series responde `Aún no hay series en esta sesión…` y no adivina el ejercicio por el
+  plan de `/hoy`.
+- **Copia el plan igual que `/log`**: misma confirmación, mismo consumo del plan y
+  mismos avisos — la validación es exactamente la de `/log`.
+- **`/deshacer` lo corrige**: si borras una serie, el siguiente suelto usa el ejercicio
+  de la que quedó.
+- Sin sesión abierta responde `No hay sesión abierta, envía /inicio`.
+
+**/historial.** Muestra la sesión abierta arriba, marcada `abierta desde las 20:35`, y
+las cinco últimas cerradas de más reciente a más antigua; cada una con fecha y duración
+en hora local (`16/10 · 45 min`) y una línea por ejercicio con el mismo formato que
+`/fin`, sin los pares plan→real. Es de solo lectura: no cambia nada. Si no cabe en un
+mensaje se descartan primero las sesiones más antiguas (tope de 3800 caracteres); nunca
+se parte el mensaje ni se corta una sesión por la mitad.
+
+**Aviso de error genérico.** Si un comando falla por un error interno, el chat recibe
+solo `⚠️ Algo salió mal; no se ha perdido nada. Inténtalo de nuevo.`; el detalle
+completo (y el token redactado) va al log. Los errores de red y de timeout no avisan en
+el chat: solo se loguean, porque la librería reintenta sola. El menú se publica al
+arrancar; si eso falla, se loguea y el bot arranca igual.
+
+*Idea futura (no implementada):* un tope razonable de peso y repeticiones en `/log`,
+que el mensaje suelto heredaría.
+
 ## Instalación y arranque (Windows)
 
 1. **Clona el repo y crea el entorno virtual** (desde la raíz del proyecto):
@@ -137,7 +182,7 @@ boxlog/
   commands.py  # orquestación: valida con core, guarda con db y devuelve la respuesta
   bot.py       # cableado con Telegram: .env, filtro por dueño y despacho a commands
 tests/         # tests de cada capa + test de punta a punta (test_e2e.py)
-specs/         # especificaciones vivas de cada funcionalidad (001-strength-logging/, 002-plan-model-and-timezone/)
+specs/         # especificaciones vivas de cada funcionalidad (001-strength-logging/, 002-plan-model-and-timezone/, 003-ux-menu-mensaje-suelto-historial/)
 docs/          # constitution.md: reglas del proyecto
 data/          # base de datos SQLite (en .gitignore)
 .env           # token y ID (en .gitignore; plantilla en .env.example)
@@ -161,9 +206,11 @@ arriba).
 ## Roadmap
 
 - **v0.2 (hecha, spec 002)** — modelo de plan (reps y rangos de porcentaje) y zona horaria UTC-3.
-- **v0.3** — WOD (tipo, cap, tiempo real) y calorías como estimación.
-- **v0.4** — Registro por audio.
-- **v0.5** — Análisis de datos de Garmin.
+- **v0.3 (hecha, spec 003)** — UX: menú de comandos, mensaje suelto, /historial y aviso de error genérico.
+- **003b** — botones inline: "↩️ Deshacer" (con el id de la serie) y "📋 Ver plan".
+- **004** — dashboard de datos.
+- **005** — WOD (tipo, cap, tiempo real) y calorías como estimación.
+- **006** — lenguaje natural.
 
 ## Nota
 

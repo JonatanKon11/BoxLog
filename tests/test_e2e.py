@@ -195,3 +195,90 @@ def test_ciclo_con_rango_reps_y_hora_local_punta_a_punta(conn, monkeypatch):
         (64.0, None, 68.0, 1),
         (64.0, 1, 68.0, 1),
     ]
+
+
+def test_mensaje_suelto_historial_y_cierre_punta_a_punta(conn, monkeypatch):
+    """Ciclo v0.3 (T5): registro suelto con plan de rango, /historial y cierre.
+
+    Todo pasa por bot.dispatch (el camino real del handler). Reloj fijado como
+    en el e2e de la 002: la base guarda marcas UTC y los mensajes muestran
+    hora local (UTC-3, RF-02/CL-12).
+    """
+    reloj = {"ahora": datetime(2026, 10, 16, 23, 35, tzinfo=timezone.utc)}
+    monkeypatch.setattr(core, "utc_now", lambda: reloj["ahora"])
+    monkeypatch.setattr(
+        db, "_now", lambda: reloj["ahora"].replace(tzinfo=None).isoformat(timespec="seconds")
+    )
+
+    def send(command, *args):
+        return bot.dispatch(1, 1, command, list(args), conn)
+
+    def suelto(texto):
+        # el mismo camino que make_free_text_handler: strip y args de un elemento
+        return bot.dispatch(1, 1, None, bot.free_text_args(texto), conn)
+
+    def series():
+        return conn.execute(
+            "SELECT exercise, real_weight_kg, reps FROM series ORDER BY id"
+        ).fetchall()
+
+    assert send("rm", "clean", "100") == "RM de clean guardado: 100 kg"
+    assert send("inicio") == "Sesión iniciada a las 20:35"  # hora local (UTC-3)
+    assert send("hoy", "clean", "70", "80-85x1") == "70% → 70 kg\n80-85% × 1 → 80-85 kg"
+    # /log normal: consume el primer ítem del plan.
+    assert send("log", "clean", "66x1") == "clean · serie 1: 66 kg × 1 (plan 70)"
+    # Mensajes sueltos: toman el ejercicio de la última serie y copian el plan (RF-02).
+    assert suelto("52x3") == "clean · serie 2: 52 kg × 3 (plan 80-85 kg × 1)"
+    assert suelto("52,5X3") == "clean · serie 3: 52,5 kg × 3"  # plan agotado; coma decimal
+    # /deshacer borra la serie del otro ejercicio y el siguiente suelto usa
+    # el ejercicio de la que quedó (CL-7).
+    assert send("log", "front squat", "70x3") == "front squat · serie 1: 70 kg × 3"
+    assert send("deshacer") == "Borrada: front squat 70x3"
+    assert suelto("60x2") == "clean · serie 4: 60 kg × 2"
+
+    # Mensajes que NO registran: ayuda o aviso de uso y la base no cambia.
+    antes = [tuple(fila) for fila in series()]
+    assert suelto("52x3?") == core.help_text()  # CL-2: caracteres extra
+    assert suelto("hola") == core.help_text()  # CL-1: sin forma de registro
+    assert suelto("52x0") == core.usage_example("log")  # CL-4: aviso sin guardar
+    # Persona ajena ignorada también en el texto suelto (CL-8, RF-08).
+    assert bot.dispatch(999, 1, None, bot.free_text_args("52x3"), conn) is None
+    assert [tuple(fila) for fila in series()] == antes
+    assert len(antes) == 4
+
+    # /historial con la sesión abierta: cabecera con hora local (CL-10, CL-14).
+    historial = send("historial")
+    assert historial.splitlines()[0] == "16/10 · abierta desde las 20:35"
+    assert "clean: 4 series · 9 repeticiones · volumen 499,5 kg · máx 66 kg" in historial
+    assert "front squat" not in historial  # la borró /deshacer
+    assert "plan→real" not in historial  # CL-14: sin pares plan→real
+
+    # Cierre 45 minutos después y /historial con la sesión cerrada.
+    reloj["ahora"] = datetime(2026, 10, 17, 0, 20, tzinfo=timezone.utc)
+    fin = send("fin")
+    assert fin == (
+        "Duración: 45 min\n"
+        "clean: 4 series · 9 repeticiones · volumen 499,5 kg · máx 66 kg\n"
+        "  plan→real: 70→66, 80-85→52\n"
+        "Volumen total: 499,5 kg"
+    )
+    historial = send("historial")
+    assert historial.splitlines()[0] == "16/10 · 45 min"
+    assert "clean: 4 series · 9 repeticiones · volumen 499,5 kg · máx 66 kg" in historial
+    assert "abierta desde" not in historial
+    assert db.get_open_session(conn) is None
+
+    # Estado final en la base: 4 series (sin la borrada) y plan consumido del todo.
+    assert [(s["exercise"], s["real_weight_kg"], s["reps"]) for s in series()] == [
+        ("clean", 66.0, 1),
+        ("clean", 52.0, 3),
+        ("clean", 52.5, 3),
+        ("clean", 60.0, 2),
+    ]
+    planes = conn.execute(
+        "SELECT weight_kg, range_max_kg, consumed FROM plan_items ORDER BY position"
+    ).fetchall()
+    assert [(p["weight_kg"], p["range_max_kg"], p["consumed"]) for p in planes] == [
+        (70.0, None, 1),
+        (80.0, 85.0, 1),
+    ]

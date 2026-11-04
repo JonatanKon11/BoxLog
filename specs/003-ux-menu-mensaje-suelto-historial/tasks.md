@@ -38,8 +38,21 @@ Ordenadas por dependencia y de menor a mayor riesgo (plan §8). Tests primero: c
   - Hecho cuando: `python -m pytest` completo en verde; el chat nunca ve `str(error)` ni traceback; un fallo de `set_my_commands` no impide que el bot arranque. ✔ 437 tests en verde (422 + 15 nuevos).
   - PÁRATE al terminar.
 
-- [ ] **T5. cierre: e2e del mensaje suelto, docs y ensayo manual** — todos los RF/CL (cierre), CL-3, CL-7
-  - Tests primero: e2e punta a punta en `test_e2e.py` (junto al ciclo de la 001) — sesión abierta, /hoy con plan, "52,5X3" suelto → confirma con coma decimal y copia del plan; /deshacer y otro suelto → usa el ejercicio anterior (CL-7); "52x0" → aviso de uso; "52x3?" → ayuda; sin sesión abierta → aviso de CL-2; y /historial de la misma sesión tras cerrarla.
-  - Implementar: el e2e; README con "Novedades de v0.3" (menú de comandos, mensaje suelto, /historial, aviso de error interno) y roadmap actualizado (v0.3 = UX; WOD/calorías quedan recorridos); `MEMORY.md` actualizado; en la respuesta final, el **ensayo manual indicado para el usuario** con el bot real: "52x3" suelto, menú visible al escribir "/", /historial y un error simulado → aviso genérico en el chat con el detalle en el log.
-  - Hecho cuando: `python -m pytest` completo en verde; README y MEMORY actualizados; sin token ni datos personales en el diff; sin dependencias nuevas ni cambios de esquema.
-  - PÁRATE al terminar.
+- [x] **T5. cierre: e2e del mensaje suelto, docs y ensayo manual** — todos los RF/CL (cierre), CL-3, CL-7
+  - Ajuste (bug del propio test): la numeración de series de `/log` es **por ejercicio**, no por sesión — el primer `/log front squat` es "serie 1", no "serie 4" —; corregido en el e2e antes de darlo por bueno.
+  - Tests primero: e2e `test_mensaje_suelto_historial_y_cierre_punta_a_punta` en `tests/test_e2e.py`, con el reloj fijado igual que el e2e de la 002 (23:35 UTC → 20:35 local) y todo pasando por `bot.dispatch` (incluido el texto suelto vía `free_text_args`, el mismo camino del handler): `/rm`, `/inicio`, `/hoy clean 70 80-85x1` (plan de rango con reps), `/log clean 66x1` (copia `plan 70`), suelto "52x3" (ejercicio de la última serie + `plan 80-85 kg × 1`), suelto "52,5X3" (coma decimal, plan agotado), `/log front squat`, `/deshacer` y suelto "60x2" que usa el ejercicio de la serie que quedó (CL-7); "52x3?" y "hola" → ayuda sin tocar la base, "52x0" → aviso sin guardar, ajeno con "52x3" → `None` sin filas extra (CL-8); `/historial` abierto con cabecera "16/10 · abierta desde las 20:35" y sin pares (CL-10/CL-14); `/fin` con "Duración: 45 min" y `plan→real: 70→66, 80-85→52`; `/historial` cerrado con "16/10 · 45 min"; estado final de la base (4 series sin la borrada, plan completo consumido).
+  - README: sección "Novedades de v0.3" (menú; mensaje suelto con ejemplos y reglas — un solo token, último ejercicio, `/deshacer` lo corrige —; /historial; aviso de error genérico; idea futura del tope de peso/reps), roadmap actualizado (v0.2 hecha, v0.3 hecha, 003b botones, 004 dashboard, 005 WOD y calorías, 006 lenguaje natural) y estructura con la spec 003.
+  - `MEMORY.md` actualizado (003 completa en la rama); `AGENTS.md` verificado en 40 líneas (≤40).
+  - **Ensayo manual para el usuario (con el bot real):**
+    1. Arrancar el bot (`python -m boxlog.bot`).
+    2. Escribir "/" y ver el menú con las descripciones (incluye /historial).
+    3. `/inicio` para abrir sesión.
+    4. `/log clean 84x5` (o con plan previo de `/hoy`) y confirmar la serie.
+    5. Mandar `52x3` suelto → debe registrar en el mismo ejercicio.
+    6. `/deshacer` y mandar otro suelto → usa el ejercicio de la serie que quedó.
+    7. Mandar `hola` y `52x3?` → debe responder la ayuda, sin registrar.
+    8. Mandar `52x0` → aviso de uso, sin registrar.
+    9. `/historial` → sesión abierta arriba con hora local.
+    10. Confirmar que en ningún momento aparece un aviso de error en el chat.
+  - Hecho cuando: `python -m pytest` completo en verde; README y MEMORY actualizados; sin token ni datos personales en el diff; sin dependencias nuevas ni cambios de esquema. ✔ 438 tests en verde (437 + 1 e2e).
+  - PÁRATE al terminar. La prueba manual, la fusión a main y la etiqueta v0.3 los hace el usuario.
