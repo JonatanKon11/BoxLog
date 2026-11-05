@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 import boxlog.dashboard as dashboard
-from boxlog import core, db
+from boxlog import commands, core, db
 
 # Reloj fijado (patrón 002): 00:04 UTC del 17/10 es 21:04 local del 16/10.
 RELOJ = datetime(2026, 10, 17, 0, 4, tzinfo=timezone.utc)
@@ -26,9 +26,33 @@ SESIONES = [
 ]
 
 SESIONES_PAYLOAD = [
-    {"date": "16/10", "open": True, "opened_at": "20:35", "duration": None},
-    {"date": "16/10", "open": False, "opened_at": None, "duration": "45 min"},
-    {"date": "15/10", "open": False, "opened_at": None, "duration": "1 h 0 min"},
+    {
+        "date": "16/10",
+        "open": True,
+        "opened_at": "20:35",
+        "duration": None,
+        "volume": None,
+        "lines": [],
+        "pairs": [],
+    },
+    {
+        "date": "16/10",
+        "open": False,
+        "opened_at": None,
+        "duration": "45 min",
+        "volume": None,
+        "lines": [],
+        "pairs": [],
+    },
+    {
+        "date": "15/10",
+        "open": False,
+        "opened_at": None,
+        "duration": "1 h 0 min",
+        "volume": None,
+        "lines": [],
+        "pairs": [],
+    },
 ]
 
 PAYLOAD_ESPERADO = {
@@ -55,14 +79,31 @@ def rutas(tmp_path, monkeypatch):
     return base, salida
 
 
-def _crear_v2(base, sesiones=()):
-    """Base v2 real creada con init_schema y las sesiones sembradas."""
+def _crear_v2(base, sesiones=(), series=()):
+    """Base v2 real creada con init_schema, con sesiones y series sembradas."""
     connection = db.connect(base)
     db.init_schema(connection)
     for fila in sesiones:
         connection.execute(
             "INSERT INTO sessions (id, started_at, ended_at) VALUES (?, ?, ?)",
             (fila["id"], fila["started_at"], fila["ended_at"]),
+        )
+    for serie in series:
+        connection.execute(
+            "INSERT INTO series (id, session_id, exercise, real_weight_kg, reps,"
+            " planned_weight_kg, planned_reps, planned_max_kg, plan_item_id,"
+            " created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)",
+            (
+                serie["id"],
+                serie["session_id"],
+                serie["exercise"],
+                serie["real_weight_kg"],
+                serie["reps"],
+                serie.get("planned_weight_kg"),
+                serie.get("planned_reps"),
+                serie.get("planned_max_kg"),
+                serie.get("created_at", "2026-10-16T18:00:00"),
+            ),
         )
     connection.commit()
     connection.close()
@@ -98,12 +139,12 @@ def test_mensajes_fijos_del_dashboard_viven_en_core():
 
 
 def test_build_dashboard_payload_campos_base():
-    payload = core.build_dashboard_payload(SESIONES, RELOJ, HOY)
+    payload = core.build_dashboard_payload(SESIONES, [], RELOJ, HOY)
     assert payload == PAYLOAD_ESPERADO
 
 
 def test_build_dashboard_payload_base_vacia():
-    payload = core.build_dashboard_payload([], RELOJ, HOY)
+    payload = core.build_dashboard_payload([], [], RELOJ, HOY)
     assert payload == {
         "generated": "16/10/2026 21:04",
         "streak": {"days": 0, "missing_today": False, "last": None},
@@ -114,14 +155,16 @@ def test_build_dashboard_payload_base_vacia():
 
 def test_build_dashboard_payload_usa_today_inyectado():
     # Sesión del 16/10 y "hoy" = 17/10: racha viva con aviso (CL-5).
-    payload = core.build_dashboard_payload([SESIONES[0]], RELOJ, date(2026, 10, 17))
+    payload = core.build_dashboard_payload(
+        [SESIONES[0]], [], RELOJ, date(2026, 10, 17)
+    )
     assert payload["streak"] == {"days": 1, "missing_today": True, "last": "16/10"}
     assert payload["month_sessions"] == 1
 
 
 def test_build_dashboard_payload_no_consulta_el_reloj(monkeypatch):
     monkeypatch.setattr(core, "utc_now", lambda: pytest.fail("no debe usar el reloj"))
-    core.build_dashboard_payload([], RELOJ, HOY)
+    core.build_dashboard_payload([], [], RELOJ, HOY)
 
 
 # --- CLI: éxito, payload incrustado y estados vacíos (RF-01, CL-1) ---
@@ -167,7 +210,7 @@ def test_base_vacia_genera_html_con_estados_vacios_y_racha_cero(
     assert "Aún no hay RM. Guarda uno con /rm &lt;ejercicio&gt; &lt;kg&gt;" in documento
     assert "🔥 0" in documento
     assert "Sesiones del mes: 0" in documento
-    assert '<ul class="sesiones">' not in documento
+    assert "<article>" not in documento  # sin sesiones no hay artículos (T4)
     payload = _payload_del_html(documento)
     assert payload["streak"] == {"days": 0, "missing_today": False, "last": None}
     assert payload["sessions"] == []
@@ -389,3 +432,304 @@ def test_fallo_en_el_reemplazo_conserva_el_html_previo(rutas, monkeypatch):
         dashboard.main()
     assert salida.read_text(encoding="utf-8") == "<html>previo</html>"
     assert not salida.with_name(salida.name + ".tmp").exists()  # sin temporal
+
+
+# --- historial completo en el payload y en el HTML (T4: RF-04, RF-05) ---
+
+
+# Sesión cerrada del 16/10 21:00→22:11 UTC (1 h 11 min en local) con dos
+# ejercicios: clean con par simple, par con rango y series sin plan; front
+# squat con par simple y una serie sin plan (volumen con coma decimal).
+SESION_CERRADA = {
+    "id": 1,
+    "started_at": "2026-10-16T21:00:00",
+    "ended_at": "2026-10-16T22:11:00",
+}
+
+SERIES_S1 = [
+    {
+        "id": 1,
+        "session_id": 1,
+        "exercise": "clean",
+        "real_weight_kg": 66.0,
+        "reps": 3,
+        "planned_weight_kg": 70.0,
+        "planned_reps": 3,
+    },
+    {
+        "id": 2,
+        "session_id": 1,
+        "exercise": "clean",
+        "real_weight_kg": 52.0,
+        "reps": 2,
+        "planned_weight_kg": 80.0,
+        "planned_reps": 2,
+        "planned_max_kg": 85.0,
+    },
+    {"id": 3, "session_id": 1, "exercise": "clean", "real_weight_kg": 66.0, "reps": 2},
+    {"id": 4, "session_id": 1, "exercise": "clean", "real_weight_kg": 60.0, "reps": 2},
+    {
+        "id": 5,
+        "session_id": 1,
+        "exercise": "front squat",
+        "real_weight_kg": 90.0,
+        "reps": 3,
+        "planned_weight_kg": 88.0,
+        "planned_reps": 3,
+    },
+    {"id": 6, "session_id": 1, "exercise": "front squat", "real_weight_kg": 85.5, "reps": 3},
+]
+
+# Cuatro sesiones: la más nueva cerrada, otra el mismo día (CL-7), una con
+# marca UTC del 16/10 que es 15/10 en local (CL-6) y una abierta olvidada
+# hace 5 días (CL-3).
+SESIONES_T4 = [
+    {"id": 1, "started_at": "2026-10-16T21:00:00", "ended_at": "2026-10-16T22:11:00"},
+    {"id": 2, "started_at": "2026-10-16T12:00:00", "ended_at": "2026-10-16T13:00:00"},
+    {"id": 3, "started_at": "2026-10-16T01:30:00", "ended_at": "2026-10-16T02:15:00"},
+    {"id": 4, "started_at": "2026-10-11T23:35:00", "ended_at": None},
+]
+
+
+def _resumen_fin(sesion, series) -> list[str]:
+    """Líneas que produciría /fin para esa sesión (misma traducción que cmd_fin)."""
+    start = datetime.fromisoformat(sesion["started_at"]).replace(tzinfo=timezone.utc)
+    end = datetime.fromisoformat(sesion["ended_at"]).replace(tzinfo=timezone.utc)
+    items = [
+        {
+            "exercise": serie["exercise"],
+            "real_weight": serie["real_weight_kg"],
+            "reps": serie["reps"],
+            "planned_weight": serie.get("planned_weight_kg"),
+            "planned_max_kg": serie.get("planned_max_kg"),
+        }
+        for serie in series
+    ]
+    return core.build_summary(start, end, items).split("\n")
+
+
+def test_payload_sesion_cerrada_con_estructura_del_plan5(rutas, monkeypatch, capsys):
+    base, salida = rutas
+    _crear_v2(base, [SESION_CERRADA], SERIES_S1)
+    monkeypatch.setattr(core, "utc_now", lambda: RELOJ)
+
+    assert dashboard.main() == 0
+    payload = _payload_del_html(salida.read_text(encoding="utf-8"))
+    assert payload["streak"] == {"days": 1, "missing_today": False, "last": "16/10"}
+    sesiones = payload["sessions"]
+    assert len(sesiones) == 1
+    assert list(sesiones[0]) == [
+        "date",
+        "open",
+        "opened_at",
+        "duration",
+        "volume",
+        "lines",
+        "pairs",
+    ]
+    assert sesiones[0] == {
+        "date": "16/10",
+        "open": False,
+        "opened_at": None,
+        "duration": "1 h 11 min",
+        "volume": "1080,5 kg",
+        "lines": [
+            "clean: 4 series · 9 repeticiones · volumen 554 kg · máx 66 kg",
+            "front squat: 2 series · 6 repeticiones · volumen 526,5 kg · máx 90 kg",
+        ],
+        "pairs": ["70→66", "80-85→52", "88→90"],
+    }
+
+
+def test_duracion_volumen_y_lineas_iguales_a_los_de_fin(rutas, monkeypatch, capsys):
+    base, salida = rutas
+    _crear_v2(base, [SESION_CERRADA], SERIES_S1)
+    monkeypatch.setattr(core, "utc_now", lambda: RELOJ)
+
+    assert dashboard.main() == 0
+    sesion = _payload_del_html(salida.read_text(encoding="utf-8"))["sessions"][0]
+
+    lineas_fin = _resumen_fin(SESION_CERRADA, SERIES_S1)
+    assert sesion["duration"] == lineas_fin[0].removeprefix("Duración: ")
+    assert sesion["volume"] == lineas_fin[-1].removeprefix("Volumen total: ")
+    assert sesion["lines"] == [
+        linea for linea in lineas_fin[1:-1] if not linea.startswith("  plan→real:")
+    ]
+    # Los pares de /fin, aplanados en el mismo orden de grupos (plan §5).
+    assert sesion["pairs"] == [
+        par
+        for linea in lineas_fin
+        if linea.startswith("  plan→real:")
+        for par in linea.removeprefix("  plan→real: ").split(", ")
+    ]
+
+
+def test_cabecera_y_lineas_iguales_a_historial(rutas, monkeypatch, capsys):
+    base, salida = rutas
+    _crear_v2(base, [SESION_CERRADA], SERIES_S1)
+    monkeypatch.setattr(core, "utc_now", lambda: RELOJ)
+
+    assert dashboard.main() == 0
+    documento = salida.read_text(encoding="utf-8")
+    connection = db.connect(base)
+    try:
+        texto_historial = commands.cmd_historial(connection, [])
+    finally:
+        connection.close()
+    bloque = texto_historial.split("\n\n")[0].split("\n")
+    assert bloque[0] == "16/10 · 1 h 11 min"  # misma cabecera que /historial
+    assert f"<h3>{bloque[0]}</h3>" in documento
+    for linea in bloque[1:]:  # mismas líneas por ejercicio, carácter a carácter
+        assert f"<li>{linea}</li>" in documento
+
+
+def test_orden_desc_abierta_olvidada_fecha_local_y_duplicados(
+    rutas, monkeypatch, capsys
+):
+    base, salida = rutas
+    _crear_v2(base, SESIONES_T4)
+    monkeypatch.setattr(core, "utc_now", lambda: RELOJ)
+
+    assert dashboard.main() == 0
+    documento = salida.read_text(encoding="utf-8")
+    payload = _payload_del_html(documento)
+    assert payload["sessions"] == [
+        {
+            "date": "16/10",
+            "open": False,
+            "opened_at": None,
+            "duration": "1 h 11 min",
+            "volume": None,
+            "lines": [],
+            "pairs": [],
+        },
+        {
+            "date": "16/10",
+            "open": False,
+            "opened_at": None,
+            "duration": "1 h 0 min",
+            "volume": None,
+            "lines": [],
+            "pairs": [],
+        },
+        {
+            # CL-6: marca UTC del 16/10, día local 15/10.
+            "date": "15/10",
+            "open": False,
+            "opened_at": None,
+            "duration": "45 min",
+            "volume": None,
+            "lines": [],
+            "pairs": [],
+        },
+        {
+            # CL-3: abierta hace 5 días, marcada y sin duración.
+            "date": "11/10",
+            "open": True,
+            "opened_at": "20:35",
+            "duration": None,
+            "volume": None,
+            "lines": [],
+            "pairs": [],
+        },
+    ]
+    # CL-7: las dos sesiones del 16/10 aparecen ambas.
+    assert [s["date"] for s in payload["sessions"]].count("16/10") == 2
+    # CL-3: la abierta no infla la racha (16 y 15 nada más, no hasta el 11).
+    assert payload["streak"] == {"days": 2, "missing_today": False, "last": "16/10"}
+    assert payload["month_sessions"] == 4
+    # Sesiones sin series → solo cabecera (sin volumen ni líneas).
+    assert documento.count("<article>") == 4
+    assert "Volumen total" not in documento
+    assert "<h3>11/10 · abierta desde las 20:35</h3>" in documento
+    assert "<h3>15/10 · 45 min</h3>" in documento
+
+
+def test_pares_rango_un_valor_sin_plan_y_filas_v1_null(rutas, monkeypatch, capsys):
+    base, salida = rutas
+    sesion = {
+        "id": 1,
+        "started_at": "2026-10-16T12:00:00",
+        "ended_at": "2026-10-16T13:00:00",
+    }
+    series = [
+        # CL-14: migrada de v1, planned_reps y planned_max_kg en NULL → simple.
+        {
+            "id": 1,
+            "session_id": 1,
+            "exercise": "clean",
+            "real_weight_kg": 98.0,
+            "reps": 1,
+            "planned_weight_kg": 96.0,
+        },
+        # Sin plan → no aporta par.
+        {"id": 2, "session_id": 1, "exercise": "clean", "real_weight_kg": 66.0, "reps": 3},
+        # Con rango planificado.
+        {
+            "id": 3,
+            "session_id": 1,
+            "exercise": "clean",
+            "real_weight_kg": 52.0,
+            "reps": 2,
+            "planned_weight_kg": 80.0,
+            "planned_max_kg": 85.0,
+        },
+    ]
+    _crear_v2(base, [sesion], series)
+    monkeypatch.setattr(core, "utc_now", lambda: RELOJ)
+
+    assert dashboard.main() == 0
+    documento = salida.read_text(encoding="utf-8")
+    sesion_payload = _payload_del_html(documento)["sessions"][0]
+    assert sesion_payload["pairs"] == ["96→98", "80-85→52"]
+    assert sesion_payload["lines"] == [
+        "clean: 3 series · 6 repeticiones · volumen 400 kg · máx 98 kg"
+    ]
+    assert "<p>plan→real: 96→98, 80-85→52</p>" in documento  # flecha → visible
+    assert "Volumen total: 400 kg" in documento
+
+
+def test_ejercicio_hostil_escapado_en_lineas_y_json(rutas, monkeypatch, capsys):
+    base, salida = rutas
+    sesion = {
+        "id": 1,
+        "started_at": "2026-10-16T12:00:00",
+        "ended_at": "2026-10-16T13:00:00",
+    }
+    series = [
+        {"id": 1, "session_id": 1, "exercise": HOSTIL, "real_weight_kg": 70.0, "reps": 3}
+    ]
+    _crear_v2(base, [sesion], series)
+    monkeypatch.setattr(core, "utc_now", lambda: RELOJ)
+
+    assert dashboard.main() == 0
+    documento = salida.read_text(encoding="utf-8")
+    payload = _payload_del_html(documento)
+    assert payload["sessions"][0]["lines"] == [
+        f"{HOSTIL}: 1 serie · 3 repeticiones · volumen 210 kg · máx 70 kg"
+    ]
+    # Capa JSON: sin "<" literal. Capa visible: entidades en la línea.
+    assert "\\u003c/script>\\u003cscript>alert(1)" in documento
+    assert (
+        "&lt;/script&gt;&lt;script&gt;alert(1)&lt;/script&gt;:"
+        " 1 serie · 3 repeticiones · volumen 210 kg · máx 70 kg"
+    ) in documento
+
+
+def test_html_un_article_por_sesion_con_volumen_lineas_y_pares(
+    rutas, monkeypatch, capsys
+):
+    base, salida = rutas
+    _crear_v2(base, [SESION_CERRADA], SERIES_S1)
+    monkeypatch.setattr(core, "utc_now", lambda: RELOJ)
+
+    assert dashboard.main() == 0
+    documento = salida.read_text(encoding="utf-8")
+    assert documento.count("<article>") == 1
+    assert "</article>" in documento
+    assert "<h3>16/10 · 1 h 11 min</h3>" in documento
+    assert "<p>Volumen total: 1080,5 kg</p>" in documento
+    assert "<li>clean: 4 series · 9 repeticiones · volumen 554 kg · máx 66 kg</li>" in (
+        documento
+    )
+    assert "<p>plan→real: 70→66, 80-85→52, 88→90</p>" in documento

@@ -619,17 +619,31 @@ def percentage_table(
 
 
 def build_dashboard_payload(
-    sessions: list[dict], now: datetime, today: date
+    sessions: list[dict], series: list[dict], now: datetime, today: date
 ) -> dict:
-    """Payload base del dashboard a partir de las sesiones (spec 004, plan §5).
+    """Payload del dashboard a partir de sesiones y series (spec 004, plan §5).
 
-    sessions son las filas de db.read_sessions (started_at/ended_at en UTC).
-    now (instante de generación) y today (día local) llegan como parámetro:
-    la función no consulta el reloj (RF-02). Traduce claves de fila a claves
-    de presentación —fecha local, apertura y duración con marcas conscientes
-    en UTC— preservando el orden de entrada; solo recibe las filas ya
-    leídas, nunca una conexión, y no escribe nada.
+    sessions son las filas de db.read_sessions y series las de db.read_series
+    (ambas en UTC, con session_id); now (instante de generación) y today (día
+    local) llegan como parámetro: la función no consulta el reloj (RF-02).
+    Traduce claves de fila a claves de presentación —fecha local, apertura,
+    duración consciente en UTC y por sesión el volumen, las líneas de
+    exercise_stat_line y los pares de plan_real_pairs, con el mismo texto que
+    /fin (RF-04, RF-05)— preservando el orden de entrada; solo recibe las
+    filas ya leídas, nunca una conexión, y no escribe nada.
     """
+    por_sesion: dict[int, list[dict]] = {}
+    for serie in series:
+        # Nombres de la base → claves de core, igual que cmd_fin (plan §8, R10).
+        por_sesion.setdefault(serie["session_id"], []).append(
+            {
+                "exercise": serie["exercise"],
+                "real_weight": serie["real_weight_kg"],
+                "reps": serie["reps"],
+                "planned_weight": serie["planned_weight_kg"],
+                "planned_max_kg": serie["planned_max_kg"],
+            }
+        )
     fechas = [local_date(sesion["started_at"]) for sesion in sessions]
     racha, falta_hoy = streak_days(set(fechas), today)
     ultimo = max(fechas) if fechas else None
@@ -644,12 +658,26 @@ def build_dashboard_payload(
         else:
             fin = _as_utc(datetime.fromisoformat(sesion["ended_at"]))
             duracion = format_duration((fin - _as_utc(inicio)).total_seconds())
+        items = por_sesion.get(sesion["id"], [])
+        grupos = group_series_by_exercise(items)
+        lines = [exercise_stat_line(grupo) for _clave, grupo in grupos]
+        # Los pares se aplanan por grupos en orden de la primera serie (plan §5).
+        pairs = [par for _clave, grupo in grupos for par in plan_real_pairs(grupo)]
+        volumen = None
+        if items:
+            total = sum(
+                float(item["real_weight"]) * int(item["reps"]) for item in items
+            )
+            volumen = f"{format_kg(total)} kg"
         filas.append(
             {
                 "date": fecha.strftime("%d/%m"),
                 "open": abierta,
                 "opened_at": opened_at,
                 "duration": duracion,
+                "volume": volumen,
+                "lines": lines,
+                "pairs": pairs,
             }
         )
     return {

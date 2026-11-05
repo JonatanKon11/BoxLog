@@ -55,7 +55,10 @@ def _leer_payload():
             return error
         now = core.utc_now()
         return core.build_dashboard_payload(
-            db.read_sessions(connection), now, core.to_local(now).date()
+            db.read_sessions(connection),
+            db.read_series(connection),
+            now,
+            core.to_local(now).date(),
         )
     finally:
         connection.close()
@@ -91,9 +94,7 @@ def render_dashboard(payload: dict) -> str:
     streak = payload["streak"]
     sesiones = "".join(_render_sesion(sesion) for sesion in payload["sessions"])
     historial = (
-        f'<ul class="sesiones">{sesiones}</ul>'
-        if sesiones
-        else f"<p>{_esc(core.HISTORIAL_EMPTY)}</p>"
+        sesiones if sesiones else f"<p>{_esc(core.HISTORIAL_EMPTY)}</p>"
     )
     return f"""<!DOCTYPE html>
 <html lang="es"><head><meta charset="utf-8">
@@ -107,8 +108,11 @@ h1 {{ margin-bottom: 0.25rem; }}
 .generado {{ color: #9aa0a6; margin-top: 0; }}
 .racha {{ font-size: 3rem; margin: 0.5rem 0; }}
 section {{ margin-top: 1.5rem; }}
-.sesiones {{ list-style: none; padding: 0; }}
-.sesiones li {{ padding: 0.25rem 0; border-bottom: 1px solid #2a2d33; }}
+article {{ border-bottom: 1px solid #2a2d33; padding-bottom: 0.75rem;
+          margin-bottom: 0.75rem; }}
+article h3 {{ margin: 0 0 0.25rem; font-size: 1.1rem; }}
+article ul {{ list-style: none; margin: 0.25rem 0; padding: 0; }}
+article p {{ margin: 0.25rem 0; }}
 @media print {{ body {{ background: #fff; color: #000; }}
                .controles {{ display: none; }} }}
 </style></head>
@@ -130,12 +134,26 @@ section {{ margin-top: 1.5rem; }}
 
 
 def _render_sesion(sesion: dict) -> str:
-    """Una línea por sesión: fecha y duración, o la marca de abierta (CL-3)."""
+    """<article> de una sesión (RF-04): cabecera local, volumen, líneas y pares.
+
+    La cabecera es "DD/MM · duración" o "DD/MM · abierta desde las HH:MM"
+    (CL-3, la abierta sin duración); una sesión sin series se queda solo con
+    la cabecera. Cada línea es exactamente la de /fin y la de pares lleva la
+    flecha → de la 001; todo el texto pasa por _esc (CL-8).
+    """
     if sesion["open"]:
-        detalle = f"abierta desde las {_esc(sesion['opened_at'])}"
+        cabecera = f"{sesion['date']} · abierta desde las {sesion['opened_at']}"
     else:
-        detalle = _esc(sesion["duration"])
-    return f"<li>{_esc(sesion['date'])} · {detalle}</li>"
+        cabecera = f"{sesion['date']} · {sesion['duration']}"
+    partes = [f"<h3>{_esc(cabecera)}</h3>"]
+    if sesion["volume"] is not None:
+        partes.append(f"<p>Volumen total: {_esc(sesion['volume'])}</p>")
+    if sesion["lines"]:
+        lineas = "".join(f"<li>{_esc(linea)}</li>" for linea in sesion["lines"])
+        partes.append(f"<ul>{lineas}</ul>")
+    if sesion["pairs"]:
+        partes.append(f"<p>plan→real: {_esc(', '.join(sesion['pairs']))}</p>")
+    return "<article>\n" + "\n".join(partes) + "\n</article>\n"
 
 
 if __name__ == "__main__":
