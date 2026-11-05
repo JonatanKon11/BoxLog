@@ -153,6 +153,33 @@ INTERNAL_ERROR_TEXT = "⚠️ Algo salió mal; no se ha perdido nada. Inténtalo
 # hasta caber en un solo mensaje; nunca se parte por la mitad (RF-03, CL-11).
 HISTORIAL_MAX_CHARS = 3800
 
+# Mensajes fijos del dashboard local (RF-01, spec 004): solo los imprime la CLI
+# del generador; aquí viven con el resto de los textos para poder testearlos.
+DASH_DB_MISSING = "No hay base: ejecuta el bot una vez para crearla."
+DASH_DB_V0 = "La base no está inicializada: ejecuta el bot una vez."
+DASH_DB_V1 = "La base está en v1: ejecuta el bot una vez para migrarla."
+DASH_DB_UNSUPPORTED = "Versión de la base no soportada por este dashboard."
+DASH_DB_LOCKED = (
+    "La base está ocupada (el bot escribiendo): inténtalo de nuevo en unos segundos."
+)
+
+
+def dashboard_version_error(version: int) -> str | None:
+    """Mensaje fijo para la versión leída de la base; None si es la 2 (RF-01).
+
+    0 = sin inicializar → DASH_DB_V0 (CL-12); 1 = sin migrar → DASH_DB_V1
+    (CL-9); otro valor → DASH_DB_UNSUPPORTED (CL-13). El dashboard nunca migra:
+    solo lee el número de versión y avisa. La versión faltante (DASH_DB_MISSING)
+    la decide quien abre la base y la CLI.
+    """
+    if version == 2:
+        return None
+    if version == 0:
+        return DASH_DB_V0
+    if version == 1:
+        return DASH_DB_V1
+    return DASH_DB_UNSUPPORTED
+
 # Menú del chat y /ayuda salen de esta única constante (RF-01, spec 003).
 # Cada descripción va en español y con 25 caracteres o menos, el límite del menú.
 COMMAND_MENU: tuple[tuple[str, str], ...] = (

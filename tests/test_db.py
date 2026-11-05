@@ -1,12 +1,14 @@
 """Tests de db: esquema, perfil y RM (RF-01, RF-02, RNF-3). Siempre con BD temporal."""
 
+import hashlib
 import sqlite3
 
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 
-from boxlog import commands, db
+from boxlog import commands, core, db
 from boxlog.core import PlannedSet
 
 
@@ -815,3 +817,365 @@ def test_get_recent_sessions_es_solo_lectura(conn):
     antes = _filas(conn, "SELECT * FROM sessions ORDER BY id")
     assert db.get_recent_sessions(conn) != []  # algo devuelve
     assert _filas(conn, "SELECT * FROM sessions ORDER BY id") == antes  # nada cambia
+
+
+# --- solo lectura para el dashboard (T2, spec 004: RF-01, CL-9 a CL-13) ---
+
+
+def _base_v2(tmp_path, nombre="boxlog.db"):
+    """Base v2 real ya cerrada en tmp_path, para abrirla después en solo lectura."""
+    base = tmp_path / nombre
+    connection = db.connect(base)
+    db.init_schema(connection)
+    connection.close()
+    return base
+
+
+def _hash(path) -> str:
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def _base_con_version(tmp_path, version):
+    """Archivo con user_version fijado (el 0 = solo creado, sin esquema)."""
+    base = tmp_path / f"v{version}.db"
+    connection = db.connect(base)
+    connection.executescript("CREATE TABLE t (x INTEGER); DROP TABLE t;")
+    connection.execute(f"PRAGMA user_version = {version}")
+    connection.commit()
+    connection.close()
+    return base
+
+
+def test_open_readonly_construye_la_uri_mode_ro_y_query_only(tmp_path, monkeypatch):
+    base = _base_v2(tmp_path)
+    real_connect = sqlite3.connect
+    captura = {}
+
+    def espiar(url, *args, **kwargs):
+        captura["url"] = url
+        captura["uri"] = kwargs.get("uri")
+        return real_connect(url, *args, **kwargs)
+
+    monkeypatch.setattr(db.sqlite3, "connect", espiar)
+    ro = db.open_readonly(base)
+    try:
+        assert captura["url"] == base.resolve().as_uri() + "?mode=ro"  # file:///…?mode=ro
+        assert captura["uri"] is True
+        assert ro.execute("PRAGMA query_only").fetchone()[0] == 1
+    finally:
+        ro.close()
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "INSERT INTO profile (weight_kg, height_cm, created_at)"
+        " VALUES (70, 170, '2026-10-17T12:00:00')",
+        "UPDATE sessions SET ended_at = '2026-10-17T13:00:00'",
+        "DELETE FROM series",
+        "CREATE TABLE nueva (id INTEGER PRIMARY KEY)",
+    ],
+)
+def test_open_readonly_rechaza_cualquier_escritura(tmp_path, sql):
+    base = _base_v2(tmp_path)
+    ro = db.open_readonly(base)
+    try:
+        with pytest.raises(sqlite3.OperationalError):
+            ro.execute(sql)
+    finally:
+        ro.close()
+
+
+def test_lecturas_no_escriben_ni_llaman_a_init_schema(tmp_path, monkeypatch):
+    base = _base_v2(tmp_path)
+    # Semilla en la base de la que se leerá después.
+    semilla = db.connect(base)
+    _insertar_sesion(semilla, 1, "2026-10-17T12:00:00", "2026-10-17T13:00:00")
+    semilla.commit()
+    semilla.close()
+
+    monkeypatch.setattr(
+        db, "init_schema", lambda *_: pytest.fail("no debe crear tablas ni migrar")
+    )
+    antes = _hash(base)
+    ro = db.open_readonly(base)
+    try:
+        assert db.read_user_version(ro) == 2
+        assert len(db.read_sessions(ro)) == 1
+        assert db.read_series(ro) == []
+        assert db.read_rm_history(ro) == []
+    finally:
+        ro.close()
+    assert _hash(base) == antes  # el sha256 del archivo no cambió
+
+
+def test_open_readonly_base_inexistente_falla_sin_crear_nada(tmp_path):
+    base = tmp_path / "noexiste.db"
+    with pytest.raises(sqlite3.OperationalError, match="unable to open database file"):
+        db.open_readonly(base)
+    assert not base.exists()  # CL-10: el archivo no se crea
+    anidada = tmp_path / "carpeta" / "futura" / "boxlog.db"
+    with pytest.raises(sqlite3.OperationalError):
+        db.open_readonly(anidada)
+    assert not anidada.parent.exists()  # ni siquiera la carpeta
+
+
+@pytest.mark.parametrize("version", [0, 1, 2, 3])
+def test_read_user_version_devuelve_el_numero_de_la_base(tmp_path, version):
+    base = _base_con_version(tmp_path, version)
+    ro = db.open_readonly(base)
+    try:
+        assert db.read_user_version(ro) == version
+    finally:
+        ro.close()
+
+
+# --- mensajes fijos de versión (RF-01: CL-9, CL-10, CL-12, CL-13) ---
+
+
+@pytest.mark.parametrize(
+    "version, esperado",
+    [
+        (2, None),  # v2: genera sin mensaje
+        (0, "La base no está inicializada: ejecuta el bot una vez."),  # CL-12
+        (1, "La base está en v1: ejecuta el bot una vez para migrarla."),  # CL-9
+        (3, "Versión de la base no soportada por este dashboard."),  # CL-13
+        (7, "Versión de la base no soportada por este dashboard."),
+    ],
+)
+def test_dashboard_version_error_mensajes_fijos_de_la_spec(version, esperado):
+    assert core.dashboard_version_error(version) == esperado
+
+
+def test_mensajes_fijos_de_base_faltante_y_ocupada():
+    assert core.DASH_DB_MISSING == "No hay base: ejecuta el bot una vez para crearla."
+    assert core.DASH_DB_LOCKED == (
+        "La base está ocupada (el bot escribiendo): inténtalo de nuevo en unos segundos."
+    )
+
+
+# --- with_lock_retry (CL-11: el bot escribiendo a la vez) ---
+
+
+def test_with_lock_retry_devuelve_al_primer_intento(monkeypatch):
+    monkeypatch.setattr(
+        db.time, "sleep", lambda _: pytest.fail("sin lock no debe esperar")
+    )
+    llamadas = []
+
+    def fn():
+        llamadas.append(1)
+        return "ok"
+
+    assert db.with_lock_retry(fn) == "ok"
+    assert llamadas == [1]
+
+
+def test_with_lock_retry_reintenta_lock_y_devuelve_al_exito(monkeypatch):
+    sleeps = []
+    monkeypatch.setattr(db.time, "sleep", sleeps.append)
+    intentos = []
+
+    def fn():
+        intentos.append(1)
+        if len(intentos) < 3:
+            raise sqlite3.OperationalError("database is locked")
+        return 42
+
+    assert db.with_lock_retry(fn, attempts=3, delay=0.05) == 42
+    assert intentos == [1, 1, 1]  # dos fallos de lock y éxito en la 3ª
+    assert sleeps == [0.05, 0.05]  # espera solo entre intentos
+
+
+def test_with_lock_retry_bloqueo_persistente_devuelve_el_mensaje(monkeypatch):
+    sleeps = []
+    monkeypatch.setattr(db.time, "sleep", sleeps.append)
+
+    def fn():
+        raise sqlite3.OperationalError("database is locked")
+
+    assert db.with_lock_retry(fn, attempts=3, delay=0.01) == core.DASH_DB_LOCKED
+    assert sleeps == [0.01, 0.01]  # 3 intentos, 2 esperas
+
+
+def test_with_lock_retry_propaga_otros_errores_sin_esperar(monkeypatch):
+    monkeypatch.setattr(
+        db.time, "sleep", lambda _: pytest.fail("un error que no es lock no espera")
+    )
+
+    def fallo_comun():
+        raise ValueError("algo raro")
+
+    with pytest.raises(ValueError, match="algo raro"):
+        db.with_lock_retry(fallo_comun)
+
+    def fallo_operacional():
+        raise sqlite3.OperationalError("no such table: nada")
+
+    with pytest.raises(sqlite3.OperationalError, match="no such table"):
+        db.with_lock_retry(fallo_operacional)
+
+
+def test_lock_real_con_exclusive_devuelve_el_mensaje_de_la_spec(tmp_path, monkeypatch):
+    base = _base_v2(tmp_path)
+    antes = _hash(base)
+    sleeps = []
+    monkeypatch.setattr(db.time, "sleep", sleeps.append)
+    bloqueo = sqlite3.connect(base, timeout=5)
+    try:
+        bloqueo.execute("BEGIN EXCLUSIVE")  # el bot escribiendo a la vez
+
+        def leer():
+            ro = db.open_readonly(base)
+            try:
+                return db.read_user_version(ro)
+            finally:
+                ro.close()
+
+        assert db.with_lock_retry(leer, attempts=3, delay=0.01) == core.DASH_DB_LOCKED
+        assert len(sleeps) == 2  # reintenta hasta agotar
+    finally:
+        bloqueo.rollback()
+        bloqueo.close()
+    assert _hash(base) == antes  # sin generar nada
+
+
+# --- lecturas: read_sessions, read_series y read_rm_history (RF-03, RF-04) ---
+
+
+def test_read_sessions_orden_desc_sin_limit_y_con_la_abierta(conn):
+    # Ids crecientes con fechas decrecientes: el orden manda por started_at, no por id.
+    for numero in range(1, 8):
+        dia = 20 - numero
+        _insertar_sesion(
+            conn, numero, f"2026-10-{dia:02d}T12:00:00", f"2026-10-{dia:02d}T13:00:00"
+        )
+    _insertar_sesion(conn, 8, "2026-10-20T02:35:00", None)  # abierta, la más nueva
+    sesiones = db.read_sessions(conn)
+    # Sin LIMIT: las 8 sesiones (get_recent_sessions solo devolvería 6).
+    assert [s["id"] for s in sesiones] == [8, 1, 2, 3, 4, 5, 6, 7]
+    assert sesiones[0]["ended_at"] is None
+    assert all(s["ended_at"] is not None for s in sesiones[1:])
+
+
+def test_read_sessions_base_vacia(conn):
+    assert db.read_sessions(conn) == []
+
+
+def _insertar_serie(
+    connection,
+    serie_id,
+    session_id,
+    exercise,
+    real,
+    reps,
+    planned=None,
+    planned_reps=None,
+    planned_max=None,
+    created="2026-10-17T12:00:00",
+):
+    connection.execute(
+        "INSERT INTO series (id, session_id, exercise, real_weight_kg, reps,"
+        " planned_weight_kg, planned_reps, planned_max_kg, plan_item_id, created_at)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)",
+        (
+            serie_id,
+            session_id,
+            exercise,
+            real,
+            reps,
+            planned,
+            planned_reps,
+            planned_max,
+            created,
+        ),
+    )
+
+
+def test_read_series_todas_en_orden_y_con_claves_de_la_base(conn):
+    _insertar_sesion(conn, 1, "2026-10-16T12:00:00", "2026-10-16T13:00:00")
+    _insertar_sesion(conn, 2, "2026-10-17T12:00:00", None)
+    _insertar_serie(conn, 1, 1, "clean", 84.0, 5, planned=80.0, planned_reps=5)
+    _insertar_serie(conn, 2, 1, "clean", 96.0, 3, planned=96.0, planned_max=98.0)
+    _insertar_serie(conn, 3, 2, "front squat", 100.0, 2)  # sin plan
+    series = db.read_series(conn)
+    assert [s["id"] for s in series] == [1, 2, 3]  # todas, orden de registro
+    assert set(series[0]) == {
+        "id",
+        "session_id",
+        "exercise",
+        "real_weight_kg",
+        "reps",
+        "planned_weight_kg",
+        "planned_reps",
+        "planned_max_kg",
+        "plan_item_id",
+        "created_at",
+    }
+    assert series[2]["planned_weight_kg"] is None  # serie sin plan
+
+
+def test_read_series_base_vacia(conn):
+    assert db.read_series(conn) == []
+
+
+def test_read_rm_history_orden_de_registro_y_claves(conn):
+    for numero, (ejercicio, kilos) in enumerate(
+        [("clean", 100.0), ("clean", 102.0), ("front squat", 170.0)], start=1
+    ):
+        conn.execute(
+            "INSERT INTO rm_history (id, exercise, weight_kg, created_at)"
+            " VALUES (?, ?, ?, ?)",
+            (numero, ejercicio, kilos, f"2026-10-{numero:02d}T12:00:00"),
+        )
+    filas = db.read_rm_history(conn)
+    assert [(r["exercise"], r["weight_kg"]) for r in filas] == [
+        ("clean", 100.0),
+        ("clean", 102.0),
+        ("front squat", 170.0),
+    ]
+    assert set(filas[0]) == {"id", "exercise", "weight_kg", "created_at"}
+
+
+def test_read_rm_history_base_vacia(conn):
+    assert db.read_rm_history(conn) == []
+
+
+def test_lecturas_sobre_base_v1_migrada(base_v1):
+    connection, _ = base_v1
+    db.init_schema(connection)  # migra 1→2 con respaldo
+    sesiones = db.read_sessions(connection)
+    assert [s["id"] for s in sesiones] == [2, 1]  # started_at DESC tras el +3 h
+    assert sesiones[0]["ended_at"] is None  # la abierta de v1 sigue abierta
+    series = db.read_series(connection)
+    assert [s["id"] for s in series] == [1, 2]
+    assert [s["planned_weight_kg"] for s in series] == [84.0, 96.0]
+    # Sin plan en rango/reps en v1: los NULL migrados llegan como None (CL-14).
+    assert all(s["planned_reps"] is None for s in series)
+    assert all(s["planned_max_kg"] is None for s in series)
+    rms = db.read_rm_history(connection)
+    assert [(r["exercise"], r["weight_kg"]) for r in rms] == [
+        ("clean", 120.0),
+        ("front squat", 170.0),
+    ]
+
+
+def test_lecturas_reflejan_lo_escrito_por_los_comandos_reales(conn):
+    commands.cmd_rm(conn, ["clean", "100"])
+    commands.cmd_inicio(conn, [])
+    commands.cmd_log(conn, ["clean", "84x5"])
+    commands.cmd_fin(conn, [])
+
+    sesiones = db.read_sessions(conn)
+    assert len(sesiones) == 1
+    assert sesiones[0]["ended_at"] is not None  # cerrada por /fin
+
+    series = db.read_series(conn)
+    assert [(s["exercise"], s["real_weight_kg"], s["reps"]) for s in series] == [
+        ("clean", 84.0, 5)
+    ]
+    assert series[0]["session_id"] == sesiones[0]["id"]
+
+    rms = db.read_rm_history(conn)
+    assert [(r["exercise"], r["weight_kg"]) for r in rms] == [("clean", 100.0)]
+    assert rms[0]["created_at"]  # la marca UTC puesta por /rm

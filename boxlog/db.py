@@ -1,8 +1,11 @@
 """Acceso a SQLite: esquema, migraciones y consultas. Sin lógica de negocio ni texto de respuesta."""
 
 import sqlite3
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+from boxlog.core import DASH_DB_LOCKED
 
 # Orden de creación: sessions y plan_items antes de series (FKs).
 # Esquema v2 (RF-06): plan con reps y rango, y el plan copiado a la serie (A-3).
@@ -432,3 +435,97 @@ def delete_series(connection: sqlite3.Connection, series_id: int) -> None:
     """Borra una serie por su id; nunca afecta a otras series ni sesiones."""
     connection.execute("DELETE FROM series WHERE id = ?", (series_id,))
     connection.commit()
+
+
+# --- solo lectura para el dashboard (RF-01, spec 004) ---
+
+
+# Segundos de espera por apertura ante una base ocupada (CL-11).
+_LOCK_TIMEOUT = 0.2
+
+
+def open_readonly(path) -> sqlite3.Connection:
+    """Conexión en solo lectura para el dashboard (RF-01, RNF-1, plan §3).
+
+    URI con mode=ro sobre la ruta absoluta más PRAGMA query_only: cualquier
+    escritura falla en esa conexión. No crea carpetas ni archivos (a diferencia
+    de connect) ni llama a init_schema: una base inexistente falla aquí mismo
+    sin aparecer en disco (CL-10).
+    """
+    uri = Path(path).resolve().as_uri() + "?mode=ro"
+    connection = sqlite3.connect(uri, uri=True, timeout=_LOCK_TIMEOUT)
+    connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA query_only = ON")
+    return connection
+
+
+def read_user_version(connection: sqlite3.Connection) -> int:
+    """PRAGMA user_version de la base (RF-01): no admite parámetros `?`.
+
+    Solo lee el número; la lectura y la traducción a mensaje viven en
+    core.dashboard_version_error y el corte es anterior a cualquier dato.
+    """
+    return connection.execute("PRAGMA user_version").fetchone()[0]
+
+
+def _es_bloqueo(error: sqlite3.OperationalError) -> bool:
+    """¿Es un error de bloqueo (el bot escribiendo a la vez, CL-11)?"""
+    texto = str(error).lower()
+    return "locked" in texto or "busy" in texto
+
+
+def with_lock_retry(fn, attempts: int = 3, delay: float = 0.05):
+    """Ejecuta fn reintentando si la base está ocupada (CL-11, RF-01).
+
+    Solo reintenta ante un error de bloqueo ("locked"/"busy"); cualquier otro
+    error se propaga sin esperar. Si se agotan los reintentos devuelve
+    DASH_DB_LOCKED, el mensaje fijo de la spec, para que la CLI lo imprima sin
+    tocar el HTML existente. time.sleep se parchea en los tests.
+    """
+    for intento in range(attempts):
+        try:
+            return fn()
+        except sqlite3.OperationalError as error:
+            if not _es_bloqueo(error):
+                raise
+            if intento == attempts - 1:
+                return DASH_DB_LOCKED
+            time.sleep(delay)
+    return DASH_DB_LOCKED  # sin intentos (attempts <= 0): base ocupada
+
+
+def read_sessions(connection: sqlite3.Connection) -> list[dict]:
+    """Todas las sesiones, de más reciente a más antigua, con la abierta (RF-04).
+
+    Orden por started_at descendente y sin LIMIT: a diferencia de
+    get_recent_sessions no hay tope de cantidad (RF-04, plan §3). Solo lectura.
+    """
+    rows = connection.execute(
+        "SELECT id, started_at, ended_at FROM sessions ORDER BY started_at DESC"
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def read_series(connection: sqlite3.Connection) -> list[dict]:
+    """Todas las series en orden de registro, con los nombres de la base (RF-04).
+
+    Sin filtro de sesión ni límite; los campos de plan sin valor llegan como
+    None (datos migrados de la v1, CL-14). Solo lectura.
+    """
+    rows = connection.execute(
+        "SELECT id, session_id, exercise, real_weight_kg, reps, planned_weight_kg,"
+        " planned_reps, planned_max_kg, plan_item_id, created_at"
+        " FROM series ORDER BY id"
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def read_rm_history(connection: sqlite3.Connection) -> list[dict]:
+    """Todo el historial de RM en orden de registro, para la evolución (RF-03).
+
+    Sin LIMIT: la sección de RM muestra la evolución completa. Solo lectura.
+    """
+    rows = connection.execute(
+        "SELECT id, exercise, weight_kg, created_at FROM rm_history ORDER BY id"
+    ).fetchall()
+    return [dict(row) for row in rows]
