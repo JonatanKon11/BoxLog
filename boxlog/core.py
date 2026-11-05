@@ -2,7 +2,7 @@
 
 import math
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import NamedTuple
 
 # Argentina: UTC-3, sin horario de verano. Desfase fijo (RF-02, RNF-2): no se
@@ -457,6 +457,30 @@ def exercise_stat_line(items: list[dict]) -> str:
     )
 
 
+def plan_real_pairs(series: list[dict]) -> list[str]:
+    """Pares plan→real de una lista de series (RF-05).
+
+    Es la lógica que estaba dentro de build_summary, extraída tal cual (mismo
+    patrón que exercise_stat_line): cada serie con plan aporta "plan→real" o
+    "plan-máx→real" con rango; las series sin plan (planned_weight None) se
+    saltan. La línea de /fin no cambia y el dashboard de la 004 reutiliza
+    exactamente este formato.
+    """
+    pairs = []
+    for item in series:
+        if item.get("planned_weight") is None:
+            continue
+        real = format_kg(item["real_weight"])
+        planned_max = item.get("planned_max_kg")
+        if planned_max is not None:
+            pairs.append(
+                f"{format_kg(item['planned_weight'])}-{format_kg(planned_max)}→{real}"
+            )
+        else:
+            pairs.append(f"{format_kg(item['planned_weight'])}→{real}")
+    return pairs
+
+
 def build_summary(start: datetime, end: datetime, series: list[dict]) -> str:
     """Resumen de la sesión (RF-04).
 
@@ -474,22 +498,93 @@ def build_summary(start: datetime, end: datetime, series: list[dict]) -> str:
             float(item["real_weight"]) * int(item["reps"]) for item in items
         )
         lines.append(exercise_stat_line(items))
-        pairs = []
-        for item in items:
-            if item.get("planned_weight") is None:
-                continue
-            real = format_kg(item["real_weight"])
-            planned_max = item.get("planned_max_kg")
-            if planned_max is not None:
-                pairs.append(
-                    f"{format_kg(item['planned_weight'])}-{format_kg(planned_max)}→{real}"
-                )
-            else:
-                pairs.append(f"{format_kg(item['planned_weight'])}→{real}")
+        pairs = plan_real_pairs(items)
         if pairs:
             lines.append(f"  plan→real: {', '.join(pairs)}")
     lines.append(f"Volumen total: {format_kg(total_volume)} kg")
     return "\n".join(lines)
+
+
+# --- funciones puras del dashboard (spec 004: RF-02, RF-03, RF-04) ---
+
+
+def local_date(marca: str) -> date:
+    """Fecha local (UTC-3) de una marca UTC guardada como ISO (CL-6).
+
+    01:30 UTC pertenece al día local anterior y 03:00 UTC al día local mismo:
+    el día siempre se decide en local, nunca en UTC, también en los cambios de
+    mes (01:00 UTC del día 1 es aún el último día del mes anterior).
+    """
+    return to_local(datetime.fromisoformat(marca)).date()
+
+
+def streak_days(days: set[date], today: date) -> tuple[int, bool]:
+    """Racha de días consecutivos con sesión: (racha, falta_hoy) (RF-02).
+
+    La racha corre desde hoy y, si hoy no entrenó pero ayer sí, sigue viva con
+    falta_hoy True (CL-5); hoy ni ayer → (0, False) (CL-4). days contiene las
+    fechas locales de inicio de cada sesión ya deduplicadas: dos sesiones un
+    mismo día cuentan una vez y una sesión abierta solo aporta su día de
+    inicio, sin arrastrar días (CL-3, CL-7). Hoy se pasa siempre como
+    parámetro; la función no consulta el reloj.
+    """
+    ayer = today - timedelta(days=1)
+    if today in days:
+        inicio, falta = today, False
+    elif ayer in days:
+        inicio, falta = ayer, True
+    else:
+        return 0, False
+    racha = 0
+    dia = inicio
+    while dia in days:
+        racha += 1
+        dia -= timedelta(days=1)
+    return racha, falta
+
+
+def count_month(dates: list[date], today: date) -> int:
+    """Sesiones iniciadas en el mes en curso local (RF-02, CL-6, CL-7).
+
+    Cuenta con duplicados (dos sesiones un mismo día = 2) y decide el mes en
+    hora local sobre today, también pasado como parámetro.
+    """
+    return sum(1 for d in dates if (d.year, d.month) == (today.year, today.month))
+
+
+def max_load_points(rows: list[dict]) -> dict[str, list[tuple[date, float]]]:
+    """Un punto (fecha, máx kg) por sesión y ejercicio para el gráfico (RF-04).
+
+    rows viene en orden cronológico con claves date, exercise (ya normalizado
+    por quien arma las filas) y max_kg; se preserva el orden de entrada. Los
+    renders de 0, 1 o más puntos por ejercicio los resuelve la plantilla.
+    """
+    puntos: dict[str, list[tuple[date, float]]] = {}
+    for row in rows:
+        puntos.setdefault(row["exercise"], []).append((row["date"], row["max_kg"]))
+    return puntos
+
+
+# Porcentajes de la tabla del dashboard: de 50 a 100 en pasos de 5 (RF-03).
+_PERCENT_STEPS = tuple(range(50, 101, 5))
+
+
+def percentage_table(
+    rms: list[tuple[str, float]],
+) -> tuple[list[str], list[list[float]]]:
+    """(ejercicios, filas) de la tabla de porcentajes sobre el RM vigente (RF-03).
+
+    11 filas —50 % a 100 % en pasos de 5— con kilos redondeados a 0,5 con
+    round_half_kg (RF-05 de la 001). Cada columna es un ejercicio con RM, en
+    el orden de rms; sin RM no hay tabla (CL-15).
+    """
+    if not rms:
+        return [], []
+    ejercicios = [nombre for nombre, _ in rms]
+    filas = [
+        [round_half_kg(kg * pct / 100) for _, kg in rms] for pct in _PERCENT_STEPS
+    ]
+    return ejercicios, filas
 
 
 def format_log_confirmation(

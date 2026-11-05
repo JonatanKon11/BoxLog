@@ -2,7 +2,7 @@
 
 import pytest
 
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import boxlog.core as core_module
@@ -12,6 +12,7 @@ from boxlog.core import (
     PlannedSet,
     build_summary,
     COMMAND_MENU,
+    count_month,
     convert_percentages,
     convert_plan_entries,
     exercise_stat_line,
@@ -26,12 +27,17 @@ from boxlog.core import (
     is_log_token,
     is_plan_token,
     is_today,
+    local_date,
+    max_load_points,
     normalize_exercise,
     parse_log_args,
     parse_number,
     parse_plan_entries,
+    plan_real_pairs,
+    percentage_table,
     round_half_kg,
     split_exercise_and_numbers,
+    streak_days,
     to_local,
     usage_example,
     utc_now,
@@ -933,3 +939,182 @@ def test_group_series_by_exercise_ordena_por_la_primera_serie():
     grupos = group_series_by_exercise(series)
     assert [clave for clave, _ in grupos] == ["clean", "back squat"]
     assert [len(items) for _, items in grupos] == [2, 1]  # Clean y clean, juntos
+
+
+# --- funciones puras del dashboard (T1, spec 004: RF-02, RF-03, RF-05) ---
+
+HOY = date(2026, 10, 17)
+
+
+@pytest.mark.parametrize(
+    "marca, esperado",
+    [
+        ("2026-10-17T01:30", date(2026, 10, 16)),  # 01:30 UTC = 22:30 local del 16
+        ("2026-10-17T01:30Z", date(2026, 10, 16)),  # lo mismo con la marca en Z
+        ("2026-10-16T23:30Z", date(2026, 10, 16)),  # 20:30 local, mismo día
+        ("2026-10-17T03:00", date(2026, 10, 17)),  # 03:00 UTC = 00:00 local, mismo día
+        ("2026-11-01T01:00", date(2026, 10, 31)),  # 01:00 UTC del 1/11 = 31/10 local
+        ("2026-11-01T03:00", date(2026, 11, 1)),  # ya es noviembre en local
+        ("2026-10-16T12:00", date(2026, 10, 16)),
+    ],
+)
+def test_local_date_marca_utc_es_fecha_local(marca, esperado):
+    """CL-6: el día se decide en local (UTC-3), nunca en UTC."""
+    assert local_date(marca) == esperado
+
+
+@pytest.mark.parametrize(
+    "dias, esperado",
+    [
+        (set(), (0, False)),  # base vacía
+        ({HOY}, (1, False)),  # solo hoy
+        (
+            {HOY - timedelta(days=2), HOY - timedelta(days=1), HOY},
+            (3, False),  # 3 días consecutivos terminados hoy
+        ),
+        (
+            {HOY, HOY - timedelta(days=1), HOY - timedelta(days=3)},
+            (2, False),  # hueco de un día: la racha no lo salta
+        ),
+        (
+            {HOY - timedelta(days=1), HOY - timedelta(days=2), HOY - timedelta(days=4)},
+            (2, True),  # hueco detrás de ayer: viva hasta ayer, sin saltarlo
+        ),
+        ({HOY - timedelta(days=1)}, (1, True)),  # hoy sin entrenar y ayer sí: viva
+        ({HOY - timedelta(days=3)}, (0, False)),  # hoy ni ayer: racha 0
+        ({HOY, HOY - timedelta(days=2)}, (1, False)),  # hueco justo detrás de hoy
+    ],
+)
+def test_streak_days(dias, esperado):
+    """(racha, falta_hoy): consecutivos desde hoy o ayer (RF-02, CL-4, CL-5)."""
+    assert streak_days(dias, HOY) == esperado
+
+
+def _dias_de_sesiones(marcas: list[str]) -> set[date]:
+    """El set que arma el payload: fecha local de inicio de cada sesión (CL-3)."""
+    return {local_date(m) for m in marcas}
+
+
+def test_racha_dos_sesiones_el_mismo_dia_cuentan_una_vez():
+    dias = _dias_de_sesiones(["2026-10-17T11:00", "2026-10-17T19:00"])
+    assert len(dias) == 1
+    assert streak_days(dias, HOY) == (1, False)
+
+
+def test_racha_sesion_abierta_de_hoy_cuenta():
+    dias = _dias_de_sesiones(["2026-10-17T14:00"])  # abierta hoy
+    assert streak_days(dias, HOY) == (1, False)
+
+
+def test_racha_sesion_abierta_olvidada_no_arrasra():
+    # Abierta hace 5 días: cuenta solo su día de inicio; ayer sí entrené.
+    dias = _dias_de_sesiones(["2026-10-12T09:00", "2026-10-16T18:00"])
+    assert streak_days(dias, HOY) == (1, True)  # no arrastra 12→17
+    # Solo la olvidada y nada reciente: la racha no se infla.
+    assert streak_days(_dias_de_sesiones(["2026-10-12T09:00"]), HOY) == (0, False)
+
+
+@pytest.mark.parametrize(
+    "marcas, esperado",
+    [
+        ([], 0),
+        (
+            ["2026-10-17T11:00", "2026-10-17T19:00", "2026-10-20T11:00"],
+            3,  # duplicados: dos sesiones un mismo día cuentan dos
+        ),
+        (["2026-11-01T01:00"], 1),  # 01:00 UTC del 1/11 sigue siendo 31/10 local
+        (["2026-11-01T03:00"], 0),  # 03:00 UTC del 1/11 ya es noviembre
+        (["2026-09-30T12:00", "2026-11-01T12:00"], 0),  # meses contiguos, no cuentan
+    ],
+)
+def test_count_month(marcas, esperado):
+    """Mes en curso local por fecha de inicio, con duplicados (RF-02, CL-6, CL-7)."""
+    dias = [local_date(m) for m in marcas]
+    assert count_month(dias, HOY) == esperado
+
+
+def test_percentage_table_11_filas_y_dos_columnas():
+    columnas, filas = percentage_table([("clean", 120.0), ("front squat", 80.0)])
+    assert columnas == ["clean", "front squat"]  # el orden de la entrada
+    assert len(filas) == 11  # 50 % a 100 % en pasos de 5
+    assert filas[0] == [60.0, 40.0]  # 50 %
+    assert filas[4] == [84.0, 56.0]  # 70 %
+    assert filas[-1] == [120.0, 80.0]  # 100 %
+
+
+def test_percentage_table_redondea_a_un_medio_kilo():
+    # RM 81: mitades exactas y residuos al 0,5 más cercano, empates hacia arriba.
+    _, filas = percentage_table([("clean", 81.0)])
+    assert [fila[0] for fila in filas] == [
+        40.5, 44.5, 48.5, 52.5, 56.5, 61.0, 65.0, 69.0, 73.0, 77.0, 81.0,
+    ]
+
+
+def test_percentage_table_sin_rm_no_hay_tabla():
+    assert percentage_table([]) == ([], [])
+
+
+def test_percentage_table_solo_los_ejercicios_recibidos():
+    # El payload pasa solo los ejercicios con RM vigente (CL-15): no se inventa
+    # ninguna columna.
+    columnas, filas = percentage_table([("clean", 120.0)])
+    assert columnas == ["clean"]
+    assert len(filas) == 11
+    assert all(len(fila) == 1 for fila in filas)
+
+
+def test_max_load_points_sin_puntos():
+    assert max_load_points([]) == {}
+
+
+def test_max_load_points_un_punto():
+    filas = [{"date": date(2026, 10, 16), "exercise": "clean", "max_kg": 66.0}]
+    assert max_load_points(filas) == {"clean": [(date(2026, 10, 16), 66.0)]}
+
+
+def test_max_load_points_varios_puntos_por_ejercicio():
+    filas = [
+        {"date": date(2026, 10, 16), "exercise": "clean", "max_kg": 66.0},
+        {"date": date(2026, 10, 16), "exercise": "front squat", "max_kg": 80.0},
+        {"date": date(2026, 10, 18), "exercise": "clean", "max_kg": 70.0},
+    ]
+    assert max_load_points(filas) == {
+        "clean": [(date(2026, 10, 16), 66.0), (date(2026, 10, 18), 70.0)],
+        "front squat": [(date(2026, 10, 16), 80.0)],
+    }
+
+
+def _fila_serie(real, planned, max_kg=None, reps=5, planned_reps=None):
+    return {
+        "exercise": "clean",
+        "real_weight": real,
+        "reps": reps,
+        "planned_weight": planned,
+        "planned_max_kg": max_kg,
+        "planned_reps": planned_reps,
+    }
+
+
+@pytest.mark.parametrize(
+    "series, esperado",
+    [
+        ([_fila_serie(52.0, 80.0, max_kg=85.0, planned_reps=1)], ["80-85→52"]),  # rango
+        ([_fila_serie(66.0, 70.0)], ["70→66"]),  # un solo valor
+        ([_fila_serie(82.0, 84.0)], ["84→82"]),  # con reps: no se muestran
+        ([_fila_serie(52.5, 70.0)], ["70→52,5"]),  # coma decimal (RF-01)
+        ([_fila_serie(98.0, 96.0)], ["96→98"]),  # fila v1: reps y máx en NULL
+        ([_fila_serie(84.0, None)], []),  # sin plan no aporta par
+        ([{"real_weight": 66.0, "planned_weight": 70.0}], ["70→66"]),  # dict mínimo
+        (
+            [
+                _fila_serie(66.0, 70.0),
+                _fila_serie(52.0, None),
+                _fila_serie(52.0, 80.0, max_kg=85.0),
+            ],
+            ["70→66", "80-85→52"],  # solo las que tienen plan, en orden
+        ),
+    ],
+)
+def test_plan_real_pairs(series, esperado):
+    """Misma lógica que la línea de /fin (RF-05): extraída, no reimplementada."""
+    assert plan_real_pairs(series) == esperado
