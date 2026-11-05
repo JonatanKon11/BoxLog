@@ -162,6 +162,10 @@ DASH_DB_UNSUPPORTED = "Versión de la base no soportada por este dashboard."
 DASH_DB_LOCKED = (
     "La base está ocupada (el bot escribiendo): inténtalo de nuevo en unos segundos."
 )
+# Éxito de la CLI (RF-01) y estado vacío de la sección RM (RF-03): también son
+# textos fijos de la spec 004 y viven aquí para poder testearlos sin consola.
+DASH_GENERATED = "Dashboard generado: {ruta} ({n} sesiones)."
+DASH_NO_RM = "Aún no hay RM. Guarda uno con /rm <ejercicio> <kg>"
 
 
 def dashboard_version_error(version: int) -> str | None:
@@ -612,6 +616,52 @@ def percentage_table(
         [round_half_kg(kg * pct / 100) for _, kg in rms] for pct in _PERCENT_STEPS
     ]
     return ejercicios, filas
+
+
+def build_dashboard_payload(
+    sessions: list[dict], now: datetime, today: date
+) -> dict:
+    """Payload base del dashboard a partir de las sesiones (spec 004, plan §5).
+
+    sessions son las filas de db.read_sessions (started_at/ended_at en UTC).
+    now (instante de generación) y today (día local) llegan como parámetro:
+    la función no consulta el reloj (RF-02). Traduce claves de fila a claves
+    de presentación —fecha local, apertura y duración con marcas conscientes
+    en UTC— preservando el orden de entrada; solo recibe las filas ya
+    leídas, nunca una conexión, y no escribe nada.
+    """
+    fechas = [local_date(sesion["started_at"]) for sesion in sessions]
+    racha, falta_hoy = streak_days(set(fechas), today)
+    ultimo = max(fechas) if fechas else None
+    filas: list[dict] = []
+    for sesion, fecha in zip(sessions, fechas):
+        inicio = datetime.fromisoformat(sesion["started_at"])
+        abierta = sesion["ended_at"] is None
+        opened_at = None
+        duracion = None
+        if abierta:
+            opened_at = to_local(inicio).strftime("%H:%M")
+        else:
+            fin = _as_utc(datetime.fromisoformat(sesion["ended_at"]))
+            duracion = format_duration((fin - _as_utc(inicio)).total_seconds())
+        filas.append(
+            {
+                "date": fecha.strftime("%d/%m"),
+                "open": abierta,
+                "opened_at": opened_at,
+                "duration": duracion,
+            }
+        )
+    return {
+        "generated": to_local(now).strftime("%d/%m/%Y %H:%M"),
+        "streak": {
+            "days": racha,
+            "missing_today": falta_hoy,
+            "last": ultimo.strftime("%d/%m") if ultimo else None,
+        },
+        "month_sessions": count_month(fechas, today),
+        "sessions": filas,
+    }
 
 
 def format_log_confirmation(
