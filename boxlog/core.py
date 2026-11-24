@@ -637,10 +637,11 @@ def build_dashboard_payload(
     /rms); now (instante de generación) y today (día local) llegan como
     parámetro: la función no consulta el reloj (RF-02). Traduce claves de fila
     a claves de presentación —fecha local, apertura, duración consciente en
-    UTC, el volumen/líneas/pares de /fin (RF-04, RF-05) y los bloques de RM:
+    UTC, el volumen/líneas/pares de /fin (RF-04, RF-05), los bloques de RM:
     vigente, evolución con fechas locales y tabla de porcentajes (RF-02,
-    RF-03)— preservando el orden de entrada; solo recibe las filas ya
-    leídas, nunca una conexión, y no escribe nada.
+    RF-03)— y `max_load` con un punto por sesión y ejercicio en orden
+    cronológico (RF-04)— preservando el orden de entrada; solo recibe las
+    filas ya leídas, nunca una conexión, y no escribe nada.
     """
     por_sesion: dict[int, list[dict]] = {}
     for serie in series:
@@ -704,6 +705,25 @@ def build_dashboard_payload(
         for ejercicio, _kg in rms
     ]
     ejercicios_pct, valores_pct = percentage_table(rms)
+    # Carga máxima: un punto por sesión y ejercicio (fecha local, máx kg) en
+    # orden cronológico y solo con series (CL-15); claves alfabéticas (RF-04).
+    filas_carga = []
+    for sesion, fecha in zip(reversed(sessions), reversed(fechas)):
+        for clave, grupo in group_series_by_exercise(
+            por_sesion.get(sesion["id"], [])
+        ):
+            filas_carga.append(
+                {
+                    "date": fecha,
+                    "exercise": clave,
+                    "max_kg": max(float(item["real_weight"]) for item in grupo),
+                }
+            )
+    carga = max_load_points(filas_carga)
+    max_load = {
+        ejercicio: [[fecha.strftime("%d/%m"), kg] for fecha, kg in puntos]
+        for ejercicio, puntos in sorted(carga.items())
+    }
     return {
         "generated": to_local(now).strftime("%d/%m/%Y %H:%M"),
         "streak": {
@@ -720,6 +740,7 @@ def build_dashboard_payload(
             "values": valores_pct,
         },
         "sessions": filas,
+        "max_load": max_load,
     }
 
 

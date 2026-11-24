@@ -129,13 +129,21 @@ figcaption {{ color: #9aa0a6; font-size: 0.9rem; }}
 .porcentajes th, .porcentajes td {{ border: 1px solid #2a2d33;
                padding: 0.25rem 0.5rem; text-align: right; }}
 .porcentajes thead th {{ text-align: center; }}
+#carga svg {{ width: 100%; height: auto; }}
+#carga svg text {{ fill: #9aa0a6; font-size: 0.75rem; }}
+.controles {{ display: block; width: 100%; max-width: 22rem; padding: 0.4rem;
+              margin: 0.5rem 0; font: inherit; color: #e8e8e8; background: #171a1f;
+              border: 1px solid #2a2d33; border-radius: 6px; }}
+[hidden] {{ display: none; }}
 article {{ border-bottom: 1px solid #2a2d33; padding-bottom: 0.75rem;
           margin-bottom: 0.75rem; }}
 article h3 {{ margin: 0 0 0.25rem; font-size: 1.1rem; }}
 article ul {{ list-style: none; margin: 0.25rem 0; padding: 0; }}
 article p {{ margin: 0.25rem 0; }}
 @media print {{ body {{ background: #fff; color: #000; }}
-               .controles {{ display: none; }} }}
+               .controles {{ display: none; }}
+               article {{ break-inside: avoid; }}
+               #carga svg {{ break-inside: avoid; }} }}
 </style></head>
 <body><main>
 <header>
@@ -147,10 +155,23 @@ article p {{ margin: 0.25rem 0; }}
 </header>
 <section id="rm"><h2>RM</h2>{_render_rm(payload)}</section>
 <section id="historial"><h2>Historial</h2>{historial}</section>
-<section id="carga"><h2>Carga máxima</h2><p>{_esc(core.HISTORIAL_EMPTY)}</p></section>
+<section id="carga"><h2>Carga máxima</h2>{_render_carga(payload)}</section>
 </main>
 <script id="datos" type="application/json">{_json_seguro(payload)}</script>
-<script>JSON.parse(document.getElementById("datos").textContent);</script>
+<script>
+JSON.parse(document.getElementById("datos").textContent);
+const grupos = document.querySelectorAll("#carga g[data-exercise]");
+const selector = document.getElementById("selector-carga");
+if (selector) {{
+  selector.addEventListener("change", function () {{
+    for (const grupo of grupos) {{
+      grupo.toggleAttribute(
+        "hidden", grupo.getAttribute("data-exercise") !== selector.value
+      );
+    }}
+  }});
+}}
+</script>
 </body></html>
 """
 
@@ -204,6 +225,37 @@ def _render_rm(payload: dict) -> str:
     return f'<div class="tarjetas">{tarjetas}</div>{evoluciones}{tabla}'
 
 
+def _render_carga(payload: dict) -> str:
+    """Sección #carga (RF-04, RF-06): sin series → estado vacío; con series →
+    un <select> por ejercicio y un <g data-exercise> por grupo pre-renderizado,
+    el primero visible y el resto con "hidden" (el JS solo alterna esa
+    atributo, así que se imprime el gráfico elegido). Todo nombre pasa por
+    _esc en value, texto de option, data-exercise y aria-label (CL-8)."""
+    carga = payload["max_load"]
+    if not carga:
+        return f"<p>{_esc(core.HISTORIAL_EMPTY)}</p>"
+    opciones = "".join(
+        f'<option value="{_esc(ejercicio)}">{_esc(ejercicio)}</option>'
+        for ejercicio in carga
+    )
+    grupos = ""
+    for indice, (ejercicio, puntos) in enumerate(carga.items()):
+        oculto = "" if indice == 0 else " hidden"
+        grupos += (
+            f'<g data-exercise="{_esc(ejercicio)}"'
+            f' aria-label="Carga máxima de {_esc(ejercicio)}"{oculto}>'
+            + _svg_trazo(puntos)
+            + "</g>"
+        )
+    return (
+        '<label class="controles" for="selector-carga">Ejercicio</label>'
+        '<select class="controles" id="selector-carga">'
+        f"{opciones}</select>"
+        '<svg viewBox="0 0 640 240" role="img"'
+        f' aria-label="Carga máxima por sesión">{grupos}</svg>'
+    )
+
+
 def _render_tabla_porcentajes(tabla: dict) -> str:
     """Tabla 50–100 % (RF-03): una columna por ejercicio y kilos con coma."""
     cabecera = "".join(f"<th>{_esc(ejercicio)}</th>" for ejercicio in tabla["exercises"])
@@ -220,12 +272,26 @@ def _render_tabla_porcentajes(tabla: dict) -> str:
 
 
 def _svg_line(puntos: list, etiqueta: str) -> str:
-    """SVG de una evolución (RF-03, R9): 0 puntos → ""; 1 → solo <circle>
-    (CL-2, sin línea); ≥2 → <polyline> + <circle>s. x por índice (los puntos
-    vienen cronológicos), y escalado min..max con margen y banda central
-    cuando max == min, sin división por cero. Eje X con las fechas de los
-    extremos y eje Y con los kilos (format_kg); etiquetas en español y todo
-    pasado por _esc, incluido el aria-label (CL-8)."""
+    """<svg> completo de una evolución (RF-03, R9): 0 puntos → "" (CL-2).
+
+    Envuelve el trazo de _svg_trazo con el aria-label de la etiqueta.
+    """
+    if not puntos:
+        return ""
+    return (
+        f'<svg viewBox="0 0 640 240" role="img" aria-label="{_esc(etiqueta)}">'
+        + _svg_trazo(puntos)
+        + "</svg>"
+    )
+
+
+def _svg_trazo(puntos: list) -> str:
+    """Trazo del SVG (R9): 0 puntos → ""; 1 → solo <circle> (CL-2, sin línea);
+    ≥2 → <polyline> + <circle>s. x por índice (los puntos vienen cronológicos),
+    y escalado min..max con margen y banda central cuando max == min, sin
+    división por cero. Eje X con las fechas de los extremos y eje Y con los
+    kilos (format_kg); etiquetas en español y todo pasado por _esc (CL-8).
+    """
     if not puntos:
         return ""
     ancho, alto = 640, 240
@@ -246,7 +312,6 @@ def _svg_line(puntos: list, etiqueta: str) -> str:
         return (alto - pie) - (valor - minimo) * (alto - pie - top) / rango
 
     piezas = [
-        f'<svg viewBox="0 0 {ancho} {alto}" role="img" aria-label="{_esc(etiqueta)}">',
         f'<line x1="{izq}" y1="{top}" x2="{izq}" y2="{alto - pie}" stroke="#3a3f47"/>',
         f'<line x1="{izq}" y1="{alto - pie}" x2="{ancho - der}" y2="{alto - pie}"'
         ' stroke="#3a3f47"/>',
@@ -270,7 +335,6 @@ def _svg_line(puntos: list, etiqueta: str) -> str:
         f'<circle cx="{x(indice):.1f}" cy="{y(valor):.1f}" r="4" fill="#7cb7ff"/>'
         for indice, valor in enumerate(kg)
     ]
-    piezas.append("</svg>")
     return "".join(piezas)
 
 

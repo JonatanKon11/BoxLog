@@ -67,6 +67,7 @@ PAYLOAD_ESPERADO = {
         "values": [],
     },
     "sessions": SESIONES_PAYLOAD,
+    "max_load": {},
 }
 
 # Nombre hostil de la spec (CL-8) y sus compañeros de lista.
@@ -170,6 +171,7 @@ def test_build_dashboard_payload_base_vacia():
             "values": [],
         },
         "sessions": [],
+        "max_load": {},
     }
 
 
@@ -1033,6 +1035,7 @@ def test_payload_con_los_bloques_del_plan5(rutas, monkeypatch):
         "rm_evolution",
         "percent_table",
         "sessions",
+        "max_load",
     ]
     assert list(payload["streak"]) == ["days", "missing_today", "last"]
     assert list(payload["percent_table"]) == ["exercises", "steps", "values"]
@@ -1040,3 +1043,278 @@ def test_payload_con_los_bloques_del_plan5(rutas, monkeypatch):
     assert all(list(fila) == ["exercise", "points"] for fila in payload["rm_evolution"])
     assert payload["month_sessions"] == 3
     assert payload["percent_table"]["steps"] == TABLA_ESPERADA["steps"]
+
+
+# --- gráfico de carga, selector y print (T6: RF-04, RF-06, CL-2, CL-8, CL-15) ---
+
+HOSTIL_CARGA = '</script><script>alert("1")</script>'
+
+# Tres días consecutivos en local para el gráfico de carga.
+SESIONES_T6 = [
+    {"id": 1, "started_at": "2026-10-14T12:00:00", "ended_at": "2026-10-14T13:00:00"},
+    {"id": 2, "started_at": "2026-10-15T12:00:00", "ended_at": "2026-10-15T13:00:00"},
+    {"id": 3, "started_at": "2026-10-16T12:00:00", "ended_at": "2026-10-16T13:00:00"},
+]
+
+# clean con dos puntos (máx 70 y 66) y snatch con tres (40 → 45 → 50);
+# los kg no son monótonos a propósito para no confundir orden con valores.
+SERIES_T6 = [
+    {"id": 1, "session_id": 2, "exercise": "clean", "real_weight_kg": 70.0, "reps": 3},
+    {"id": 2, "session_id": 3, "exercise": "clean", "real_weight_kg": 66.0, "reps": 3},
+    {"id": 3, "session_id": 1, "exercise": "snatch", "real_weight_kg": 40.0, "reps": 2},
+    {"id": 4, "session_id": 2, "exercise": "snatch", "real_weight_kg": 45.0, "reps": 2},
+    {"id": 5, "session_id": 3, "exercise": "snatch", "real_weight_kg": 50.0, "reps": 2},
+]
+
+MAX_LOAD_ESPERADO = {
+    # Claves alfabéticas, puntos en orden cronológico con fecha local (plan §5).
+    "clean": [["15/10", 70.0], ["16/10", 66.0]],
+    "snatch": [["14/10", 40.0], ["15/10", 45.0], ["16/10", 50.0]],
+}
+
+
+def _trazo_de(documento: str, ejercicio: str) -> str:
+    """El <g data-exercise="…"> de un ejercicio, con todo su trazo dentro."""
+    match = re.search(
+        rf'<g data-exercise="{re.escape(ejercicio)}".*?</g>', documento, re.DOTALL
+    )
+    assert match, f"falta el grupo de {ejercicio}"
+    return match.group(0)
+
+
+def _seccion(documento: str, seccion: str) -> str:
+    """Interior de una <section id="…"> para acotar los conteos."""
+    return documento.split(f'<section id="{seccion}">')[1].split("</section>")[0]
+
+
+def test_payload_max_load_con_fechas_locales_y_orden_cronologico(
+    rutas, monkeypatch
+):
+    base, salida = rutas
+    _crear_v2(base, SESIONES_T6, SERIES_T6)
+    monkeypatch.setattr(core, "utc_now", lambda: RELOJ)
+
+    assert dashboard.main() == 0
+    payload = _payload_del_html(salida.read_text(encoding="utf-8"))
+    assert payload["max_load"] == MAX_LOAD_ESPERADO
+
+
+def test_carga_un_option_y_un_g_por_ejercicio_con_series(rutas, monkeypatch):
+    base, salida = rutas
+    _crear_v2(base, SESIONES_T6, SERIES_T6)
+    monkeypatch.setattr(core, "utc_now", lambda: RELOJ)
+
+    assert dashboard.main() == 0
+    documento = salida.read_text(encoding="utf-8")
+    assert '<label class="controles" for="selector-carga">Ejercicio</label>' in (
+        documento
+    )
+    assert '<select class="controles" id="selector-carga">' in documento
+    assert '<option value="clean">clean</option>' in documento
+    assert '<option value="snatch">snatch</option>' in documento
+    assert documento.count('<g data-exercise="') == 2
+    # El primero visible por defecto; el resto ocultos hasta que el JS cambie.
+    assert '<g data-exercise="clean" aria-label="Carga máxima de clean">' in documento
+    assert (
+        '<g data-exercise="snatch" aria-label="Carga máxima de snatch" hidden>'
+        in documento
+    )
+
+
+def test_carga_sin_series_muestra_el_estado_vacio(rutas, monkeypatch):
+    base, salida = rutas
+    _crear_v2(base, SESIONES)  # sin series: 0 puntos (RF-04, CL-1)
+    monkeypatch.setattr(core, "utc_now", lambda: RELOJ)
+
+    assert dashboard.main() == 0
+    seccion = _seccion(salida.read_text(encoding="utf-8"), "carga")
+    assert core.HISTORIAL_EMPTY in seccion  # mensaje en español
+    assert "<select" not in seccion
+    assert "<g data-exercise" not in seccion
+    assert "<circle" not in seccion
+    assert "<polyline" not in seccion
+
+
+def test_carga_cl15_series_sin_rm_y_rm_sin_series_no_se_cruzan(
+    rutas, monkeypatch
+):
+    base, salida = rutas
+    _crear_v2(
+        base,
+        [SESIONES_T6[0]],
+        [
+            {
+                "id": 1,
+                "session_id": 1,
+                "exercise": "back squat",
+                "real_weight_kg": 70.0,
+                "reps": 3,
+            }
+        ],
+        rms=[
+            {
+                "id": 1,
+                "exercise": "front squat",
+                "weight_kg": 82.5,
+                "created_at": "2026-10-10T12:00:00",
+            }
+        ],
+    )
+    monkeypatch.setattr(core, "utc_now", lambda: RELOJ)
+
+    assert dashboard.main() == 0
+    documento = salida.read_text(encoding="utf-8")
+    payload = _payload_del_html(documento)
+    assert payload["max_load"] == {"back squat": [["14/10", 70.0]]}
+    seccion = _seccion(documento, "carga")
+    assert '<option value="back squat">back squat</option>' in seccion  # sin RM: sí
+    assert "front squat" not in seccion  # con RM pero sin series: fuera (CL-15)
+    tabla = _seccion(documento, "rm")
+    assert "front squat" in tabla  # …y en la tabla de porcentajes, como en T5
+
+
+def test_carga_con_uno_dos_y_cinco_puntos(rutas, monkeypatch):
+    base, salida = rutas
+    # thruster en una sola sesión (1 punto), clean en dos (2) y deadlift en
+    # las cinco (5); las sesiones 4 y 5 son anteriores a las de SESIONES_T6.
+    sesiones = SESIONES_T6 + [
+        {"id": 4, "started_at": "2026-10-12T12:00:00", "ended_at": "2026-10-12T13:00:00"},
+        {"id": 5, "started_at": "2026-10-13T12:00:00", "ended_at": "2026-10-13T13:00:00"},
+    ]
+    series = SERIES_T6 + [
+        {"id": 6, "session_id": 1, "exercise": "thruster", "real_weight_kg": 30.0, "reps": 3},
+        {"id": 7, "session_id": 1, "exercise": "deadlift", "real_weight_kg": 100.0, "reps": 1},
+        {"id": 8, "session_id": 5, "exercise": "deadlift", "real_weight_kg": 105.0, "reps": 1},
+        {"id": 9, "session_id": 4, "exercise": "deadlift", "real_weight_kg": 110.0, "reps": 1},
+        {"id": 10, "session_id": 2, "exercise": "deadlift", "real_weight_kg": 115.0, "reps": 1},
+        {"id": 11, "session_id": 3, "exercise": "deadlift", "real_weight_kg": 120.0, "reps": 1},
+    ]
+    _crear_v2(base, sesiones, series)
+    monkeypatch.setattr(core, "utc_now", lambda: RELOJ)
+
+    assert dashboard.main() == 0
+    documento = salida.read_text(encoding="utf-8")
+    uno = _trazo_de(documento, "thruster")
+    assert uno.count("<circle") == 1
+    assert "<polyline" not in uno  # CL-2: un punto es solo círculo
+    dos = _trazo_de(documento, "clean")
+    assert dos.count("<circle") == 2
+    assert dos.count("<polyline") == 1
+    cinco = _trazo_de(documento, "deadlift")
+    assert cinco.count("<circle") == 5
+    assert cinco.count("<polyline") == 1
+    assert "nan" not in documento.lower()
+    assert "inf" not in documento.lower()
+    assert "12/10" in cinco and "16/10" in cinco  # fechas locales en el eje X
+
+
+def test_carga_pesos_iguales_sin_division_por_cero(rutas, monkeypatch):
+    base, salida = rutas
+    _crear_v2(
+        base,
+        [
+            {"id": 1, "started_at": "2026-10-15T12:00:00", "ended_at": "2026-10-15T13:00:00"},
+            {"id": 2, "started_at": "2026-10-16T12:00:00", "ended_at": "2026-10-16T13:00:00"},
+        ],
+        [
+            {"id": 1, "session_id": 1, "exercise": "clean", "real_weight_kg": 66.0, "reps": 3},
+            {"id": 2, "session_id": 2, "exercise": "clean", "real_weight_kg": 66.0, "reps": 3},
+        ],
+    )
+    monkeypatch.setattr(core, "utc_now", lambda: RELOJ)
+
+    assert dashboard.main() == 0
+    trazo = _trazo_de(salida.read_text(encoding="utf-8"), "clean")
+    assert trazo.count("<circle") == 2
+    assert "<polyline" in trazo  # banda central, sin dividir entre cero
+    assert "nan" not in trazo.lower()
+    assert "inf" not in trazo.lower()
+
+
+def test_carga_nombre_hostil_escapado_en_las_tres_capas(rutas, monkeypatch):
+    base, salida = rutas
+    _crear_v2(
+        base,
+        [SESIONES_T6[0]],
+        [
+            {
+                "id": 1,
+                "session_id": 1,
+                "exercise": HOSTIL_CARGA,
+                "real_weight_kg": 70.0,
+                "reps": 3,
+            }
+        ],
+    )
+    monkeypatch.setattr(core, "utc_now", lambda: RELOJ)
+
+    assert dashboard.main() == 0
+    documento = salida.read_text(encoding="utf-8")
+    escapado = (
+        "&lt;/script&gt;&lt;script&gt;alert(&quot;1&quot;)&lt;/script&gt;"
+    )
+    assert f'<option value="{escapado}">{escapado}</option>' in documento
+    assert f'<g data-exercise="{escapado}"' in documento
+    assert f'aria-label="Carga máxima de {escapado}"' in documento
+    # Capa JSON: los "<" nunca quedan crudos y las comillas van escapadas.
+    assert "\\u003c/script>\\u003cscript>alert" in documento
+    assert HOSTIL_CARGA not in documento  # en ningún sitio como texto crudo
+
+
+def test_js_del_selector_sin_innerHTML_eval_fetch(rutas, monkeypatch):
+    base, salida = rutas
+    _crear_v2(base, SESIONES_T6, SERIES_T6)
+    monkeypatch.setattr(core, "utc_now", lambda: RELOJ)
+
+    assert dashboard.main() == 0
+    documento = salida.read_text(encoding="utf-8")
+    bloques = re.findall(r"<script>(.*?)</script>", documento, re.DOTALL)
+    assert len(bloques) == 1  # solo el de lógica; el de datos lleva id
+    js = bloques[0]
+    assert 'JSON.parse(document.getElementById("datos").textContent)' in js
+    assert "querySelectorAll" in js and "data-exercise" in js
+    assert "addEventListener" in js
+    assert "innerHTML" not in js
+    assert "eval" not in js
+    assert "fetch" not in js
+    assert "http" not in js
+
+
+def test_css_mobile_first_print_break_inside_y_viewport(rutas, monkeypatch):
+    base, salida = rutas
+    _crear_v2(base, SESIONES_T6, SERIES_T6)
+    monkeypatch.setattr(core, "utc_now", lambda: RELOJ)
+
+    assert dashboard.main() == 0
+    documento = salida.read_text(encoding="utf-8")
+    assert 'name="viewport"' in documento  # mobile-first
+    assert "#carga svg { width: 100%; height: auto; }" in documento
+    assert "@media print" in documento
+    assert ".controles { display: none; }" in documento  # select oculto al imprimir
+    assert "article { break-inside: avoid; }" in documento  # sin cortar sesiones
+
+
+def test_html_sin_http_ni_https_de_recursos(rutas, monkeypatch):
+    base, salida = rutas
+    _crear_v2(base, SESIONES_T6, SERIES_T6)
+    monkeypatch.setattr(core, "utc_now", lambda: RELOJ)
+
+    assert dashboard.main() == 0
+    documento = salida.read_text(encoding="utf-8")
+    assert "http://" not in documento
+    assert "https://" not in documento
+    assert "<script src=" not in documento
+    assert "@import" not in documento
+    assert "fetch(" not in documento
+
+
+def test_render_determinista_con_la_misma_entrada(rutas, monkeypatch):
+    base, salida = rutas
+    _crear_v2(base, SESIONES_T6, SERIES_T6)
+    monkeypatch.setattr(core, "utc_now", lambda: RELOJ)
+
+    assert dashboard.main() == 0
+    documento = salida.read_text(encoding="utf-8")
+    payload = _payload_del_html(documento)
+    assert dashboard.render_dashboard(payload) == documento
+    assert dashboard.render_dashboard(payload) == dashboard.render_dashboard(payload)
