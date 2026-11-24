@@ -3,12 +3,12 @@
 Bot de Telegram personal para registrar entrenamientos de crossfit. Portfolio para GitHub.
 
 ## Stack y estructura
-- Python, SQLite, python-telegram-bot y pytest en Windows; paquete único `boxlog/` con `core.py` (cálculos puros), `db.py` (acceso a datos), `commands.py` (comandos) y `bot.py` (arranque y wiring). Tests en `tests/`.
+- Python, SQLite, python-telegram-bot y pytest en Windows; paquete único `boxlog/` con `core.py` (cálculos puros), `db.py` (acceso a datos), `commands.py` (comandos), `bot.py` (arranque y wiring) y `dashboard.py` (dashboard local de solo lectura). Tests en `tests/`.
 - La lógica vive en `core` y `db`; la interfaz solo orquesta.
 
 ## Comandos
 - Entorno e instalación: `python -m venv .venv` (activar `.venv\Scripts\activate`), luego `pip install -r requirements.txt`.
-- Tests: `python -m pytest` · Bot: `python -m boxlog.bot`.
+- Tests: `python -m pytest` · Bot: `python -m boxlog.bot` · Dashboard: `python -m boxlog.dashboard` (genera `data/dashboard.html`).
 
 ## Convenciones
 - Archivos, funciones y variables en inglés; comentarios y docs en español; código claro y breve.
@@ -28,7 +28,7 @@ Bot de Telegram personal para registrar entrenamientos de crossfit. Portfolio pa
 3. **Al terminar:** actualizar `MEMORY.md` (estado, decisiones, aprendizajes, próximos pasos).
 
 ## Límites
-- **Siempre:** token fuera del código y de git · tests en pytest · `data/` y `.env` en `.gitignore` · mantener `MEMORY.md` al día.
+- **Siempre:** token fuera del código y de git · tests en pytest · `data/` y `.env` en `.gitignore` (el dashboard solo lee y su HTML, con datos personales, vive en `data/`) · mantener `MEMORY.md` al día.
 - **Pregunta antes:** añadir dependencias · cambiar la estructura del paquete · tocar el modelo de datos de SQLite · enviar el perfil o los RM fuera de la base local · mostrarlos en logs.
 - **Nunca:** subir claves, `.env` o datos personales a git · inventar decisiones sin registrarlas.
 - El perfil (peso y altura) y los RM son datos que el proyecto guarda por diseño: no preguntes por ellos.

@@ -125,6 +125,29 @@ arrancar; si eso falla, se loguea y el bot arranca igual.
 *Idea futura (no implementada):* un tope razonable de peso y repeticiones en `/log`,
 que el mensaje suelto heredaría.
 
+## Novedades de v0.4: dashboard local
+
+`python -m boxlog.dashboard` genera `data/dashboard.html`, una página con tus datos de
+siempre para verlos de un vistazo en el navegador:
+
+- Racha con 🔥, aviso si hoy aún no entrenas y sesiones del mes.
+- RM vigentes con su evolución y la tabla de porcentajes (50–100 %, de 5 en 5).
+- Historial de sesiones con fecha local, duración, volumen, líneas y pares `plan→real`.
+- Gráfico de carga máxima por ejercicio con un selector para cambiar de ejercicio.
+
+Cómo se usa:
+
+- **Doble clic** en `data/dashboard.html`: se abre en el navegador, sin servidor.
+- **Regenerar:** vuelve a ejecutar `python -m boxlog.dashboard`; puede correr con el bot
+  en marcha, y si la base está ocupada reintenta y, si el bloqueo persiste, avisa sin
+  tocar el HTML anterior.
+- **Guardar como PDF:** imprimir desde el navegador → "Guardar como PDF"; al imprimir
+  el selector queda oculto y cada sesión se imprime entera.
+- **Solo lectura:** abre la base en modo lectura y no necesita internet: nada sale de
+  tu equipo.
+- **Datos personales:** el HTML vive en `data/` (ignorado por git) y contiene tus
+  entrenamientos; no lo compartas sin revisarlo antes.
+
 ## Instalación y arranque (Windows)
 
 1. **Clona el repo y crea el entorno virtual** (desde la raíz del proyecto):
@@ -181,10 +204,11 @@ boxlog/
   db.py        # acceso a datos SQLite: esquema, perfil, RM, sesiones, plan y series
   commands.py  # orquestación: valida con core, guarda con db y devuelve la respuesta
   bot.py       # cableado con Telegram: .env, filtro por dueño y despacho a commands
+  dashboard.py # generador del dashboard local en solo lectura (python -m boxlog.dashboard)
 tests/         # tests de cada capa + test de punta a punta (test_e2e.py)
-specs/         # especificaciones vivas de cada funcionalidad (001-strength-logging/, 002-plan-model-and-timezone/, 003-ux-menu-mensaje-suelto-historial/)
+specs/         # especificaciones vivas de cada funcionalidad (001-strength-logging/, 002-plan-model-and-timezone/, 003-ux-menu-mensaje-suelto-historial/, 004-dashboard-local/)
 docs/          # constitution.md: reglas del proyecto
-data/          # base de datos SQLite (en .gitignore)
+data/          # base de datos SQLite y dashboard.html generado (en .gitignore)
 .env           # token y ID (en .gitignore; plantilla en .env.example)
 ```
 
@@ -207,8 +231,8 @@ arriba).
 
 - **v0.2 (hecha, spec 002)** — modelo de plan (reps y rangos de porcentaje) y zona horaria UTC-3.
 - **v0.3 (hecha, spec 003)** — UX: menú de comandos, mensaje suelto, /historial y aviso de error genérico.
+- **v0.4 (hecha, spec 004)** — dashboard local de solo lectura (`python -m boxlog.dashboard`).
 - **003b** — botones inline: "↩️ Deshacer" (con el id de la serie) y "📋 Ver plan".
-- **004** — dashboard de datos.
 - **005** — WOD (tipo, cap, tiempo real) y calorías como estimación.
 - **006** — lenguaje natural.
 
