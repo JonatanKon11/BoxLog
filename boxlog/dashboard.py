@@ -57,6 +57,8 @@ def _leer_payload():
         return core.build_dashboard_payload(
             db.read_sessions(connection),
             db.read_series(connection),
+            db.read_rm_history(connection),
+            db.list_rms(connection),
             now,
             core.to_local(now).date(),
         )
@@ -92,6 +94,12 @@ def render_dashboard(payload: dict) -> str:
     por _esc y el JSON incrustado por _json_seguro: las dos capas de CL-8.
     """
     streak = payload["streak"]
+    aviso = ""
+    if streak["missing_today"]:
+        aviso = f'<p class="aviso">{_esc(core.DASH_STREAK_ALIVE)}</p>'
+    elif streak["days"] == 0 and streak["last"] is not None:
+        ultimo = core.DASH_LAST_SESSION.format(ultimo=streak["last"])
+        aviso = f'<p class="aviso">{_esc(ultimo)}</p>'
     sesiones = "".join(_render_sesion(sesion) for sesion in payload["sessions"])
     historial = (
         sesiones if sesiones else f"<p>{_esc(core.HISTORIAL_EMPTY)}</p>"
@@ -108,6 +116,19 @@ h1 {{ margin-bottom: 0.25rem; }}
 .generado {{ color: #9aa0a6; margin-top: 0; }}
 .racha {{ font-size: 3rem; margin: 0.5rem 0; }}
 section {{ margin-top: 1.5rem; }}
+.aviso {{ color: #e0b354; margin: 0.25rem 0; }}
+.tarjetas {{ display: flex; flex-wrap: wrap; gap: 0.75rem; }}
+.tarjeta {{ border: 1px solid #2a2d33; border-radius: 6px; padding: 0.5rem 0.75rem; }}
+.tarjeta h3 {{ margin: 0; font-size: 1rem; }}
+.tarjeta .kg {{ margin: 0.25rem 0 0; font-size: 1.5rem; font-weight: 600; }}
+figure {{ margin: 1rem 0; }}
+figcaption {{ color: #9aa0a6; font-size: 0.9rem; }}
+#rm svg {{ width: 100%; height: auto; }}
+#rm svg text {{ fill: #9aa0a6; font-size: 0.75rem; }}
+.porcentajes {{ border-collapse: collapse; margin-top: 0.75rem; width: 100%; }}
+.porcentajes th, .porcentajes td {{ border: 1px solid #2a2d33;
+               padding: 0.25rem 0.5rem; text-align: right; }}
+.porcentajes thead th {{ text-align: center; }}
 article {{ border-bottom: 1px solid #2a2d33; padding-bottom: 0.75rem;
           margin-bottom: 0.75rem; }}
 article h3 {{ margin: 0 0 0.25rem; font-size: 1.1rem; }}
@@ -121,9 +142,10 @@ article p {{ margin: 0.25rem 0; }}
 <h1>BoxLog</h1>
 <p class="generado">Generado el {_esc(payload["generated"])}</p>
 <p class="racha">🔥 {streak["days"]}</p>
+{aviso}
 <p>Sesiones del mes: {payload["month_sessions"]}</p>
 </header>
-<section id="rm"><h2>RM</h2><p>{_esc(core.DASH_NO_RM)}</p></section>
+<section id="rm"><h2>RM</h2>{_render_rm(payload)}</section>
 <section id="historial"><h2>Historial</h2>{historial}</section>
 <section id="carga"><h2>Carga máxima</h2><p>{_esc(core.HISTORIAL_EMPTY)}</p></section>
 </main>
@@ -154,6 +176,102 @@ def _render_sesion(sesion: dict) -> str:
     if sesion["pairs"]:
         partes.append(f"<p>plan→real: {_esc(', '.join(sesion['pairs']))}</p>")
     return "<article>\n" + "\n".join(partes) + "\n</article>\n"
+
+
+def _render_rm(payload: dict) -> str:
+    """Sección RM (RF-03): sin RM vigente → texto fijo; con RM → tarjetas,
+    una evolución SVG por ejercicio y la tabla de porcentajes. Todo el texto
+    visible (nombres incluidos) pasa por _esc (CL-8)."""
+    rms = payload["rm_current"]
+    if not rms:
+        return f"<p>{_esc(core.DASH_NO_RM)}</p>"
+    tarjetas = "".join(
+        f'<div class="tarjeta"><h3>{_esc(rm["exercise"])}</h3>'
+        f'<p class="kg">{_esc(core.format_kg(rm["kg"]))} kg</p></div>'
+        for rm in rms
+    )
+    evoluciones = "".join(
+        "<figure><figcaption>Evolución de "
+        + _esc(evolucion["exercise"])
+        + "</figcaption>"
+        + _svg_line(
+            evolucion["points"], f"Evolución de {evolucion['exercise']}"
+        )
+        + "</figure>"
+        for evolucion in payload["rm_evolution"]
+    )
+    tabla = _render_tabla_porcentajes(payload["percent_table"])
+    return f'<div class="tarjetas">{tarjetas}</div>{evoluciones}{tabla}'
+
+
+def _render_tabla_porcentajes(tabla: dict) -> str:
+    """Tabla 50–100 % (RF-03): una columna por ejercicio y kilos con coma."""
+    cabecera = "".join(f"<th>{_esc(ejercicio)}</th>" for ejercicio in tabla["exercises"])
+    filas = "".join(
+        f"<tr><th>{paso} %</th>"
+        + "".join(f"<td>{_esc(core.format_kg(kg))}</td>" for kg in valores)
+        + "</tr>"
+        for paso, valores in zip(tabla["steps"], tabla["values"])
+    )
+    return (
+        '<table class="porcentajes"><thead><tr><th>%</th>'
+        f"{cabecera}</tr></thead><tbody>{filas}</tbody></table>"
+    )
+
+
+def _svg_line(puntos: list, etiqueta: str) -> str:
+    """SVG de una evolución (RF-03, R9): 0 puntos → ""; 1 → solo <circle>
+    (CL-2, sin línea); ≥2 → <polyline> + <circle>s. x por índice (los puntos
+    vienen cronológicos), y escalado min..max con margen y banda central
+    cuando max == min, sin división por cero. Eje X con las fechas de los
+    extremos y eje Y con los kilos (format_kg); etiquetas en español y todo
+    pasado por _esc, incluido el aria-label (CL-8)."""
+    if not puntos:
+        return ""
+    ancho, alto = 640, 240
+    izq, top, der, pie = 56, 16, 16, 40
+    kg = [float(valor) for _fecha, valor in puntos]
+    minimo, maximo = min(kg), max(kg)
+    rango = maximo - minimo
+    n = len(puntos)
+
+    def x(indice: float) -> float:
+        if n == 1:
+            return (izq + ancho - der) / 2
+        return izq + indice * (ancho - izq - der) / (n - 1)
+
+    def y(valor: float) -> float:
+        if rango == 0:
+            return (top + alto - pie) / 2
+        return (alto - pie) - (valor - minimo) * (alto - pie - top) / rango
+
+    piezas = [
+        f'<svg viewBox="0 0 {ancho} {alto}" role="img" aria-label="{_esc(etiqueta)}">',
+        f'<line x1="{izq}" y1="{top}" x2="{izq}" y2="{alto - pie}" stroke="#3a3f47"/>',
+        f'<line x1="{izq}" y1="{alto - pie}" x2="{ancho - der}" y2="{alto - pie}"'
+        ' stroke="#3a3f47"/>',
+        f'<text x="6" y="{top + 10}">{_esc(core.format_kg(maximo))} kg</text>',
+        f'<text x="6" y="{alto - pie}">{_esc(core.format_kg(minimo))} kg</text>',
+        f'<text x="{izq}" y="{alto - 14}">{_esc(puntos[0][0])}</text>',
+    ]
+    if n >= 2:
+        piezas.append(
+            f'<text x="{ancho - der}" y="{alto - 14}" text-anchor="end">'
+            f"{_esc(puntos[-1][0])}</text>"
+        )
+        coordenadas = " ".join(
+            f"{x(indice):.1f},{y(valor):.1f}" for indice, valor in enumerate(kg)
+        )
+        piezas.append(
+            f'<polyline points="{coordenadas}" fill="none" stroke="#7cb7ff"'
+            ' stroke-width="2"/>'
+        )
+    piezas += [
+        f'<circle cx="{x(indice):.1f}" cy="{y(valor):.1f}" r="4" fill="#7cb7ff"/>'
+        for indice, valor in enumerate(kg)
+    ]
+    piezas.append("</svg>")
+    return "".join(piezas)
 
 
 if __name__ == "__main__":

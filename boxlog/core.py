@@ -162,10 +162,13 @@ DASH_DB_UNSUPPORTED = "Versión de la base no soportada por este dashboard."
 DASH_DB_LOCKED = (
     "La base está ocupada (el bot escribiendo): inténtalo de nuevo en unos segundos."
 )
-# Éxito de la CLI (RF-01) y estado vacío de la sección RM (RF-03): también son
-# textos fijos de la spec 004 y viven aquí para poder testearlos sin consola.
+# Éxito de la CLI (RF-01), estado vacío de la sección RM (RF-03) y avisos de
+# la cabecera (RF-02): también son textos fijos de la spec 004 y viven aquí
+# para poder testearlos sin consola.
 DASH_GENERATED = "Dashboard generado: {ruta} ({n} sesiones)."
 DASH_NO_RM = "Aún no hay RM. Guarda uno con /rm <ejercicio> <kg>"
+DASH_STREAK_ALIVE = "Hoy aún no entrenas; la racha sigue viva."
+DASH_LAST_SESSION = "Último entreno: {ultimo}"
 
 
 def dashboard_version_error(version: int) -> str | None:
@@ -619,18 +622,25 @@ def percentage_table(
 
 
 def build_dashboard_payload(
-    sessions: list[dict], series: list[dict], now: datetime, today: date
+    sessions: list[dict],
+    series: list[dict],
+    rm_history: list[dict],
+    rms: list[tuple[str, float]],
+    now: datetime,
+    today: date,
 ) -> dict:
-    """Payload del dashboard a partir de sesiones y series (spec 004, plan §5).
+    """Payload del dashboard a partir de sesiones, series y RM (plan §5).
 
     sessions son las filas de db.read_sessions y series las de db.read_series
-    (ambas en UTC, con session_id); now (instante de generación) y today (día
-    local) llegan como parámetro: la función no consulta el reloj (RF-02).
-    Traduce claves de fila a claves de presentación —fecha local, apertura,
-    duración consciente en UTC y por sesión el volumen, las líneas de
-    exercise_stat_line y los pares de plan_real_pairs, con el mismo texto que
-    /fin (RF-04, RF-05)— preservando el orden de entrada; solo recibe las
-    filas ya leídas, nunca una conexión, y no escribe nada.
+    (ambas en UTC, con session_id); rm_history es db.read_rm_history (entero,
+    cronológico) y rms los vigentes de db.list_rms (alfabéticos, igual que
+    /rms); now (instante de generación) y today (día local) llegan como
+    parámetro: la función no consulta el reloj (RF-02). Traduce claves de fila
+    a claves de presentación —fecha local, apertura, duración consciente en
+    UTC, el volumen/líneas/pares de /fin (RF-04, RF-05) y los bloques de RM:
+    vigente, evolución con fechas locales y tabla de porcentajes (RF-02,
+    RF-03)— preservando el orden de entrada; solo recibe las filas ya
+    leídas, nunca una conexión, y no escribe nada.
     """
     por_sesion: dict[int, list[dict]] = {}
     for serie in series:
@@ -680,6 +690,20 @@ def build_dashboard_payload(
                 "pairs": pairs,
             }
         )
+    # RM vigente y evolución en el orden alfabético de rms (igual que /rms).
+    rm_current = [{"exercise": ejercicio, "kg": kg} for ejercicio, kg in rms]
+    rm_evolution = [
+        {
+            "exercise": ejercicio,
+            "points": [
+                [local_date(fila["created_at"]).strftime("%d/%m"), fila["weight_kg"]]
+                for fila in rm_history
+                if fila["exercise"] == ejercicio
+            ],
+        }
+        for ejercicio, _kg in rms
+    ]
+    ejercicios_pct, valores_pct = percentage_table(rms)
     return {
         "generated": to_local(now).strftime("%d/%m/%Y %H:%M"),
         "streak": {
@@ -688,6 +712,13 @@ def build_dashboard_payload(
             "last": ultimo.strftime("%d/%m") if ultimo else None,
         },
         "month_sessions": count_month(fechas, today),
+        "rm_current": rm_current,
+        "rm_evolution": rm_evolution,
+        "percent_table": {
+            "exercises": ejercicios_pct,
+            "steps": list(_PERCENT_STEPS),
+            "values": valores_pct,
+        },
         "sessions": filas,
     }
 

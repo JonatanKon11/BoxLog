@@ -59,6 +59,13 @@ PAYLOAD_ESPERADO = {
     "generated": "16/10/2026 21:04",
     "streak": {"days": 2, "missing_today": False, "last": "16/10"},
     "month_sessions": 3,
+    "rm_current": [],
+    "rm_evolution": [],
+    "percent_table": {
+        "exercises": [],
+        "steps": [50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100],
+        "values": [],
+    },
     "sessions": SESIONES_PAYLOAD,
 }
 
@@ -79,8 +86,8 @@ def rutas(tmp_path, monkeypatch):
     return base, salida
 
 
-def _crear_v2(base, sesiones=(), series=()):
-    """Base v2 real creada con init_schema, con sesiones y series sembradas."""
+def _crear_v2(base, sesiones=(), series=(), rms=()):
+    """Base v2 real creada con init_schema, con sesiones, series y RM sembrados."""
     connection = db.connect(base)
     db.init_schema(connection)
     for fila in sesiones:
@@ -104,6 +111,12 @@ def _crear_v2(base, sesiones=(), series=()):
                 serie.get("planned_max_kg"),
                 serie.get("created_at", "2026-10-16T18:00:00"),
             ),
+        )
+    for rm in rms:
+        connection.execute(
+            "INSERT INTO rm_history (id, exercise, weight_kg, created_at)"
+            " VALUES (?, ?, ?, ?)",
+            (rm["id"], rm["exercise"], rm["weight_kg"], rm["created_at"]),
         )
     connection.commit()
     connection.close()
@@ -139,16 +152,23 @@ def test_mensajes_fijos_del_dashboard_viven_en_core():
 
 
 def test_build_dashboard_payload_campos_base():
-    payload = core.build_dashboard_payload(SESIONES, [], RELOJ, HOY)
+    payload = core.build_dashboard_payload(SESIONES, [], [], [], RELOJ, HOY)
     assert payload == PAYLOAD_ESPERADO
 
 
 def test_build_dashboard_payload_base_vacia():
-    payload = core.build_dashboard_payload([], [], RELOJ, HOY)
+    payload = core.build_dashboard_payload([], [], [], [], RELOJ, HOY)
     assert payload == {
         "generated": "16/10/2026 21:04",
         "streak": {"days": 0, "missing_today": False, "last": None},
         "month_sessions": 0,
+        "rm_current": [],
+        "rm_evolution": [],
+        "percent_table": {
+            "exercises": [],
+            "steps": [50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100],
+            "values": [],
+        },
         "sessions": [],
     }
 
@@ -156,7 +176,7 @@ def test_build_dashboard_payload_base_vacia():
 def test_build_dashboard_payload_usa_today_inyectado():
     # Sesión del 16/10 y "hoy" = 17/10: racha viva con aviso (CL-5).
     payload = core.build_dashboard_payload(
-        [SESIONES[0]], [], RELOJ, date(2026, 10, 17)
+        [SESIONES[0]], [], [], [], RELOJ, date(2026, 10, 17)
     )
     assert payload["streak"] == {"days": 1, "missing_today": True, "last": "16/10"}
     assert payload["month_sessions"] == 1
@@ -164,7 +184,7 @@ def test_build_dashboard_payload_usa_today_inyectado():
 
 def test_build_dashboard_payload_no_consulta_el_reloj(monkeypatch):
     monkeypatch.setattr(core, "utc_now", lambda: pytest.fail("no debe usar el reloj"))
-    core.build_dashboard_payload([], [], RELOJ, HOY)
+    core.build_dashboard_payload([], [], [], [], RELOJ, HOY)
 
 
 # --- CLI: éxito, payload incrustado y estados vacíos (RF-01, CL-1) ---
@@ -733,3 +753,290 @@ def test_html_un_article_por_sesion_con_volumen_lineas_y_pares(
         documento
     )
     assert "<p>plan→real: 70→66, 80-85→52, 88→90</p>" in documento
+
+
+# --- racha, mes y sección RM (T5: RF-02, RF-03, CL-2, CL-4, CL-5, CL-15) ---
+
+
+# rm_history sembrado fuera de orden alfabético: clean con evolución (115 →
+# 120; la primera marca es 01/09 01:30 UTC = 31/08 en local) y front squat
+# con un solo RM (CL-2: un punto → círculo sin línea).
+RMS_DESORDEN = [
+    {
+        "id": 1,
+        "exercise": "front squat",
+        "weight_kg": 82.5,
+        "created_at": "2026-10-10T12:00:00",
+    },
+    {"id": 2, "exercise": "clean", "weight_kg": 115.0, "created_at": "2026-09-01T01:30:00"},
+    {"id": 3, "exercise": "clean", "weight_kg": 120.0, "created_at": "2026-09-15T15:00:00"},
+]
+
+# Para la tabla: clean 100 kg y front squat 82,5 kg (cubren los redondeos a 0,5).
+RMS_TABLA = [
+    {"id": 1, "exercise": "clean", "weight_kg": 100.0, "created_at": "2026-10-10T12:00:00"},
+    {"id": 2, "exercise": "front squat", "weight_kg": 82.5, "created_at": "2026-10-11T12:00:00"},
+]
+
+# Valores calculados a mano: values[paso] = [100 × p/100, round_half_kg(82,5 × p/100)]
+# (fila = paso de porcentaje, columna = ejercicio, plan §5).
+TABLA_ESPERADA = {
+    "exercises": ["clean", "front squat"],
+    "steps": [50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100],
+    "values": [
+        [50, 41.5],
+        [55, 45.5],
+        [60, 49.5],
+        [65, 53.5],
+        [70, 58],
+        [75, 62],
+        [80, 66],
+        [85, 70],
+        [90, 74.5],
+        [95, 78.5],
+        [100, 82.5],
+    ],
+}
+
+
+def test_cabecera_hoy_entrenado_sin_aviso(rutas, monkeypatch):
+    base, salida = rutas
+    _crear_v2(
+        base,
+        [{"id": 1, "started_at": "2026-10-16T12:00:00", "ended_at": "2026-10-16T13:00:00"}],
+    )
+    monkeypatch.setattr(core, "utc_now", lambda: RELOJ)
+
+    assert dashboard.main() == 0
+    documento = salida.read_text(encoding="utf-8")
+    assert "🔥 1" in documento  # CL-2: una sesión de hoy → racha 1
+    assert "Sesiones del mes: 1" in documento
+    assert "Hoy aún no entrenas" not in documento
+    assert "Último entreno" not in documento
+
+
+def test_cabecera_aviso_de_racha_viva_cuando_falta_hoy(rutas, monkeypatch):
+    # Solo ayer (15/10): la racha sigue viva con el aviso literal (CL-5).
+    base, salida = rutas
+    _crear_v2(
+        base,
+        [{"id": 1, "started_at": "2026-10-15T12:00:00", "ended_at": "2026-10-15T13:00:00"}],
+    )
+    monkeypatch.setattr(core, "utc_now", lambda: RELOJ)
+
+    assert dashboard.main() == 0
+    documento = salida.read_text(encoding="utf-8")
+    assert "🔥 1" in documento
+    assert "Hoy aún no entrenas; la racha sigue viva." in documento
+    assert "Último entreno" not in documento
+
+
+def test_cabecera_ultimo_entreno_cuando_la_racha_es_cero(rutas, monkeypatch):
+    # Hueco desde antayer (CL-4): racha 0 y la fecha del último entreno.
+    base, salida = rutas
+    _crear_v2(
+        base,
+        [{"id": 1, "started_at": "2026-10-14T12:00:00", "ended_at": "2026-10-14T13:00:00"}],
+    )
+    monkeypatch.setattr(core, "utc_now", lambda: RELOJ)
+
+    assert dashboard.main() == 0
+    documento = salida.read_text(encoding="utf-8")
+    assert "🔥 0" in documento
+    assert "Último entreno: 14/10" in documento
+    assert "Hoy aún no entrenas" not in documento
+
+
+def test_cabecera_base_vacia_sin_ultimo_entreno(rutas, monkeypatch):
+    base, salida = rutas
+    _crear_v2(base)
+    monkeypatch.setattr(core, "utc_now", lambda: RELOJ)
+
+    assert dashboard.main() == 0
+    documento = salida.read_text(encoding="utf-8")
+    assert "🔥 0" in documento
+    assert "Último entreno" not in documento  # sin fecha no se inventa (CL-1)
+    assert "Hoy aún no entrenas" not in documento
+
+
+def test_sesiones_del_mes_duplicados_y_cambio_de_mes_local(rutas, monkeypatch):
+    # Dos el 16/10 y otra que en local cae el 15/10; dos marcas de octubre
+    # que en local caen en septiembre no cuentan (CL-7 + mes local).
+    base, salida = rutas
+    _crear_v2(
+        base,
+        [
+            {"id": 1, "started_at": "2026-10-16T13:00:00", "ended_at": None},
+            {"id": 2, "started_at": "2026-10-16T12:00:00", "ended_at": "2026-10-16T13:00:00"},
+            {"id": 3, "started_at": "2026-10-16T01:30:00", "ended_at": "2026-10-16T02:00:00"},
+            {"id": 4, "started_at": "2026-10-01T01:30:00", "ended_at": "2026-10-01T02:00:00"},
+            {"id": 5, "started_at": "2026-09-30T23:00:00", "ended_at": "2026-09-30T23:30:00"},
+        ],
+    )
+    monkeypatch.setattr(core, "utc_now", lambda: RELOJ)
+
+    assert dashboard.main() == 0
+    documento = salida.read_text(encoding="utf-8")
+    payload = _payload_del_html(documento)
+    assert payload["month_sessions"] == 3
+    assert "Sesiones del mes: 3" in documento
+    assert payload["streak"]["days"] == 2  # 16 y 15 de octubre nada más
+
+
+def test_rm_vigente_en_tarjetas_con_orden_alfabetico(rutas, monkeypatch):
+    base, salida = rutas
+    _crear_v2(base, rms=RMS_DESORDEN)
+    monkeypatch.setattr(core, "utc_now", lambda: RELOJ)
+
+    assert dashboard.main() == 0
+    documento = salida.read_text(encoding="utf-8")
+    payload = _payload_del_html(documento)
+    assert payload["rm_current"] == [
+        {"exercise": "clean", "kg": 120},
+        {"exercise": "front squat", "kg": 82.5},
+    ]
+    assert '<div class="tarjetas">' in documento
+    assert '<p class="kg">82,5 kg</p>' in documento  # coma decimal (RF-06)
+    assert documento.index("<h3>clean</h3>") < documento.index(
+        "<h3>front squat</h3>"
+    )  # mismo orden que /rms
+
+
+def test_rm_evolucion_con_historial_y_svg(rutas, monkeypatch):
+    base, salida = rutas
+    _crear_v2(base, rms=RMS_DESORDEN)
+    monkeypatch.setattr(core, "utc_now", lambda: RELOJ)
+
+    assert dashboard.main() == 0
+    documento = salida.read_text(encoding="utf-8")
+    payload = _payload_del_html(documento)
+    assert payload["rm_evolution"] == [
+        {"exercise": "clean", "points": [["31/08", 115], ["15/09", 120]]},
+        {"exercise": "front squat", "points": [["10/10", 82.5]]},
+    ]
+    # 3 RM en total; solo clean tiene 2 puntos → 1 polyline (CL-2: 1 punto sin línea).
+    assert documento.count("<circle") == 3
+    assert documento.count("<polyline") == 1
+    assert "31/08" in documento  # fecha local en el eje X (la marca era de septiembre)
+
+
+def test_svg_line_con_cero_uno_dos_y_cinco_puntos():
+    assert dashboard._svg_line([], "Evolución de clean") == ""
+
+    uno = dashboard._svg_line([["01/09", 100]], "Evolución de clean")
+    assert uno.count("<circle") == 1
+    assert "<polyline" not in uno
+
+    dos = dashboard._svg_line([["01/09", 100], ["02/09", 110]], "Evolución de clean")
+    assert dos.count("<circle") == 2
+    assert dos.count("<polyline") == 1
+
+    cinco = dashboard._svg_line(
+        [[f"{dia:02d}/09", 100 + dia] for dia in range(1, 6)], "Evolución de clean"
+    )
+    assert cinco.count("<circle") == 5
+    assert cinco.count("<polyline") == 1
+    assert "nan" not in cinco.lower()
+
+
+def test_svg_line_con_pesos_iguales_sin_division_por_cero():
+    svg = dashboard._svg_line(
+        [["01/09", 100], ["02/09", 100], ["03/09", 100]], "Evolución de clean"
+    )
+    assert svg.count("<circle") == 3
+    assert svg.count("<polyline") == 1  # línea en la banda central, sin NaN
+    assert "nan" not in svg.lower()
+    assert "inf" not in svg.lower()
+    assert 'aria-label="Evolución de clean"' in svg
+
+
+def test_tabla_de_porcentajes_11_filas_y_valores_a_mano(rutas, monkeypatch):
+    base, salida = rutas
+    _crear_v2(base, rms=RMS_TABLA)
+    monkeypatch.setattr(core, "utc_now", lambda: RELOJ)
+
+    assert dashboard.main() == 0
+    documento = salida.read_text(encoding="utf-8")
+    payload = _payload_del_html(documento)
+    assert payload["percent_table"] == TABLA_ESPERADA
+    assert '<table class="porcentajes">' in documento
+    assert documento.count("<tr>") == 12  # cabecera + 11 filas (RF-03)
+    assert "<th>100 %</th>" in documento
+    assert "<td>41,5</td>" in documento  # 82,5 × 50 % = 41,25 → 41,5
+    assert "<td>58</td>" in documento  # 82,5 × 70 % = 57,75 → 58
+    assert "<td>74,5</td>" in documento  # 82,5 × 90 % = 74,25 → 74,5
+
+
+def test_cl15_rm_sin_series_y_series_sin_rm_no_se_cruzan(rutas, monkeypatch):
+    base, salida = rutas
+    _crear_v2(
+        base,
+        [{"id": 1, "started_at": "2026-10-16T12:00:00", "ended_at": "2026-10-16T13:00:00"}],
+        [
+            {
+                "id": 1,
+                "session_id": 1,
+                "exercise": "back squat",
+                "real_weight_kg": 70.0,
+                "reps": 3,
+            }
+        ],
+        rms=[
+            {"id": 1, "exercise": "front squat", "weight_kg": 82.5, "created_at": "2026-10-10T12:00:00"}
+        ],
+    )
+    monkeypatch.setattr(core, "utc_now", lambda: RELOJ)
+
+    assert dashboard.main() == 0
+    documento = salida.read_text(encoding="utf-8")
+    payload = _payload_del_html(documento)
+    assert payload["percent_table"]["exercises"] == ["front squat"]  # RM sin series: sí
+    assert payload["rm_current"] == [{"exercise": "front squat", "kg": 82.5}]
+    seccion_rm = documento.split('<section id="rm">')[1].split("</section>")[0]
+    assert "front squat" in seccion_rm
+    assert "back squat" not in seccion_rm  # series sin RM: fuera (CL-15)
+    assert "<li>back squat:" in documento  # …pero sí en el historial
+
+
+def test_rm_hostil_escapado_en_las_dos_capas(rutas, monkeypatch):
+    base, salida = rutas
+    _crear_v2(
+        base,
+        rms=[
+            {"id": 1, "exercise": HOSTIL, "weight_kg": 90.0, "created_at": "2026-10-10T12:00:00"}
+        ],
+    )
+    monkeypatch.setattr(core, "utc_now", lambda: RELOJ)
+
+    assert dashboard.main() == 0
+    documento = salida.read_text(encoding="utf-8")
+    payload = _payload_del_html(documento)
+    assert payload["rm_current"] == [{"exercise": HOSTIL, "kg": 90}]
+    assert "\\u003c/script>\\u003cscript>alert(1)" in documento  # capa JSON
+    assert "<h3>&lt;/script&gt;&lt;script&gt;alert(1)&lt;/script&gt;</h3>" in documento
+    assert "<th>&lt;/script&gt;&lt;script&gt;alert(1)&lt;/script&gt;</th>" in documento
+    assert 'aria-label="Evolución de &lt;/script&gt;' in documento  # atributo SVG
+
+
+def test_payload_con_los_bloques_del_plan5(rutas, monkeypatch):
+    base, salida = rutas
+    _crear_v2(base, SESIONES, rms=RMS_DESORDEN)
+    monkeypatch.setattr(core, "utc_now", lambda: RELOJ)
+
+    assert dashboard.main() == 0
+    payload = _payload_del_html(salida.read_text(encoding="utf-8"))
+    assert list(payload) == [
+        "generated",
+        "streak",
+        "month_sessions",
+        "rm_current",
+        "rm_evolution",
+        "percent_table",
+        "sessions",
+    ]
+    assert list(payload["streak"]) == ["days", "missing_today", "last"]
+    assert list(payload["percent_table"]) == ["exercises", "steps", "values"]
+    assert all(list(fila) == ["exercise", "kg"] for fila in payload["rm_current"])
+    assert all(list(fila) == ["exercise", "points"] for fila in payload["rm_evolution"])
+    assert payload["month_sessions"] == 3
+    assert payload["percent_table"]["steps"] == TABLA_ESPERADA["steps"]
